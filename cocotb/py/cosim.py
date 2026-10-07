@@ -10,7 +10,10 @@ retirement step, IRQ-only MIP updates, data-side access notifications,
 error reporting and release. This file is the single authority for the
 packed command arguments; ``tb/ibex_cocotb_tb.sv`` only decodes them
 through its named constants, and the tb issues the underlying DPI calls in
-the same order as the UVM cosim scoreboard.
+the same order as the UVM cosim scoreboard. The two sides are kept honest
+by a layout fingerprint (see ``layout_fingerprint``): CMD_INIT returns the
+tb's copy of it, so any drift between the opcode numbers or packed bit
+positions fails bring-up instead of silently weakening the comparison.
 
 The comparison core itself (dv/cosim) is compiled into the simulation
 unchanged; nothing here reimplements any checking.
@@ -25,6 +28,66 @@ if TYPE_CHECKING:
     from mem_agent import DsideAccess
 
 logger = logging.getLogger("cocotb.cosim")
+
+# Bit positions of the packed command arguments. These numbers exist in
+# the tb as identically named localparams as well; the fingerprint below
+# is the mechanism that detects drift between the two copies.
+STEP_RD_ADDR_LSB = 0
+STEP_RF_WR_SUPPRESS_BIT = 5
+STEP_TRAP_BIT = 6
+STEP_NMI_INT_BIT = 7
+STEP_NMI_BIT = 8
+STEP_DEBUG_REQ_BIT = 9
+
+DSIDE_STORE_BIT = 0
+DSIDE_ERROR_BIT = 1
+DSIDE_MIS_FIRST_BIT = 2
+DSIDE_MIS_SECOND_BIT = 3
+DSIDE_MIS_FIRST_ERR_BIT = 4
+DSIDE_M_MODE_BIT = 5
+
+SETMIP_NMI_BIT = 1
+SETMIP_NMI_INT_BIT = 2
+
+# The complete command layout in one table: opcode numbers followed by the
+# packed-argument bit positions.
+_LAYOUT_VALUES = (
+    CosimChannel.CMD_INIT,
+    CosimChannel.CMD_STEP,
+    CosimChannel.CMD_GET_ERRORS,
+    CosimChannel.CMD_GET_INSN_CNT,
+    CosimChannel.CMD_RELEASE,
+    CosimChannel.CMD_NOTIFY_DSIDE,
+    CosimChannel.CMD_SET_MIP,
+    CosimChannel.CMD_GET_ERROR_STR,
+    STEP_RD_ADDR_LSB,
+    STEP_RF_WR_SUPPRESS_BIT,
+    STEP_TRAP_BIT,
+    STEP_NMI_INT_BIT,
+    STEP_NMI_BIT,
+    STEP_DEBUG_REQ_BIT,
+    DSIDE_STORE_BIT,
+    DSIDE_ERROR_BIT,
+    DSIDE_MIS_FIRST_BIT,
+    DSIDE_MIS_SECOND_BIT,
+    DSIDE_MIS_FIRST_ERR_BIT,
+    DSIDE_M_MODE_BIT,
+    SETMIP_NMI_BIT,
+    SETMIP_NMI_INT_BIT,
+)
+
+
+def layout_fingerprint() -> int:
+    """FNV-1a (32-bit) over the opcode numbers and the packed-argument bit
+    positions. tb/ibex_cocotb_tb.sv computes the same function from its
+    localparams and CMD_INIT returns it, so any drift between the two
+    sides fails bring-up instead of silently weakening the comparison. The
+    result is forced odd so it can never collide with the 0 init-failure
+    return value."""
+    h = 0x811C0001
+    for value in _LAYOUT_VALUES:
+        h = ((h ^ value) * 0x01000193) & 0xFFFFFFFF
+    return h | 1
 
 
 class CosimError(Exception):
@@ -63,10 +126,26 @@ class Cosim:
 
     def __init__(self, channel: CosimChannel):
         self._ch = channel
+        # Sticky release state: after CMD_RELEASE the tb destroys the
+        # co-simulator, so any later command would hit the tb's null guard
+        # and come back as a 0 return; raising here with the real cause is
+        # far easier to diagnose.
+        self._released = False
+
+    def _check_alive(self):
+        if self._released:
+            raise CosimError("co-simulator command issued after release")
 
     async def init_cosim(self):
-        if not await self._ch.cmd(self._ch.CMD_INIT):
+        ret = await self._ch.cmd(self._ch.CMD_INIT)
+        if not ret:
             raise CosimError("spike_cosim_init failed (see sim log)")
+        if ret != layout_fingerprint():
+            raise CosimError(
+                "command layout mismatch between Python and the tb: "
+                "tb=0x{:08x}, python=0x{:08x} (an opcode number or packed "
+                "bit position drifted; both sides must agree)".format(
+                    ret, layout_fingerprint()))
         logger.info("SpikeCosim initialised")
 
     async def step(self, *, pc, rd_wdata, rd_addr, rf_wr_suppress, trap,
@@ -75,6 +154,7 @@ class Cosim:
         """Step the co-simulator with one retired instruction; False means
         the comparison failed (the error strings are then available through
         ``error_str()``/``drain_errors()``)."""
+        self._check_alive()
         # CMD_STEP argument packing. This is the authoritative definition of
         # the bit layout; tb/ibex_cocotb_tb.sv only decodes it through named
         # constants (STEP_*). The tb issues the DPI calls in the same order
@@ -84,12 +164,12 @@ class Cosim:
         #             rf_wr_suppress, rd_addr[4:0]},
         #   cmd_a3/a4 : pre_mip/post_mip, cmd_a5/a6 : mcycle[31:0]/[63:32].
         a2 = (
-            (rd_addr & 0x1F)
-            | ((rf_wr_suppress & 1) << 5)
-            | ((trap & 1) << 6)
-            | ((nmi_int & 1) << 7)
-            | ((nmi & 1) << 8)
-            | ((debug_req & 1) << 9)
+            ((rd_addr & 0x1F) << STEP_RD_ADDR_LSB)
+            | ((rf_wr_suppress & 1) << STEP_RF_WR_SUPPRESS_BIT)
+            | ((trap & 1) << STEP_TRAP_BIT)
+            | ((nmi_int & 1) << STEP_NMI_INT_BIT)
+            | ((nmi & 1) << STEP_NMI_BIT)
+            | ((debug_req & 1) << STEP_DEBUG_REQ_BIT)
         )
         ok = await self._ch.cmd(
             self._ch.CMD_STEP,
@@ -107,10 +187,13 @@ class Cosim:
         """Tell the co-simulator about an IRQ-only RVFI event: set_nmi,
         set_nmi_int, set_mip(pre_mip, pre_mip), no step (the UVM
         scoreboard's irq_only branch)."""
+        self._check_alive()
         # cmd_a2 : {29'b0, nmi_int, nmi, 1'b0}; cmd_a3 is used for both mip
         # arguments, as in UVM.
-        a2 = ((nmi & 1) << 1) | ((nmi_int & 1) << 2)
-        await self._ch.cmd(self._ch.CMD_SET_MIP, a2=a2, a3=pre_mip)
+        a2 = ((nmi & 1) << SETMIP_NMI_BIT) | ((nmi_int & 1)
+                                              << SETMIP_NMI_INT_BIT)
+        if not await self._ch.cmd(self._ch.CMD_SET_MIP, a2=a2, a3=pre_mip):
+            raise CosimError("CMD_SET_MIP failed")
 
     async def notify_dside(self, access: "DsideAccess"):
         """Tell the co-simulator about a data-side access seen on the memory
@@ -121,19 +204,22 @@ class Cosim:
         latches at the (request && grant) address phase; the memory agent
         carries them in the DsideAccess.
         """
+        self._check_alive()
         # CMD_NOTIFY_DSIDE argument packing (authoritative here; the tb
         # decodes it with the DSIDE_* constants):
         #   cmd_a0 : addr, cmd_a1 : data, cmd_a2 : byte enables,
         #   cmd_a3 : {26'b0, m_mode_access, misaligned_first_saw_error,
         #             misaligned_second, misaligned_first, error, store}
         a3 = ((1 if access.store else 0)
-              | ((1 if access.error else 0) << 1)
-              | ((1 if access.misaligned_first else 0) << 2)
-              | ((1 if access.misaligned_second else 0) << 3)
-              | ((1 if access.misaligned_first_saw_error else 0) << 4)
-              | ((1 if access.m_mode_access else 0) << 5))
-        await self._ch.cmd(self._ch.CMD_NOTIFY_DSIDE, a0=access.addr,
-                           a1=access.data, a2=access.be, a3=a3)
+              | ((1 if access.error else 0) << DSIDE_ERROR_BIT)
+              | ((1 if access.misaligned_first else 0) << DSIDE_MIS_FIRST_BIT)
+              | ((1 if access.misaligned_second else 0) << DSIDE_MIS_SECOND_BIT)
+              | ((1 if access.misaligned_first_saw_error else 0)
+                 << DSIDE_MIS_FIRST_ERR_BIT)
+              | ((1 if access.m_mode_access else 0) << DSIDE_M_MODE_BIT))
+        if not await self._ch.cmd(self._ch.CMD_NOTIFY_DSIDE, a0=access.addr,
+                                  a1=access.data, a2=access.be, a3=a3):
+            raise CosimError("CMD_NOTIFY_DSIDE failed")
 
     async def error_str(self, index: int) -> str:
         """The indexed comparison error string (no side effects); an
@@ -141,6 +227,7 @@ class Cosim:
         transferred 32 bits at a time (a1 == -1 asks for its length, word
         w carries bytes [4w..4w+3]); the channel lock serialises each
         transfer against every other command user."""
+        self._check_alive()
         length = await self._ch.cmd(self._ch.CMD_GET_ERROR_STR, a0=index,
                                     a1=0xFFFFFFFF)
         if length <= 0:
@@ -154,10 +241,15 @@ class Cosim:
     async def drain_errors(self) -> int:
         """Print and clear the accumulated comparison errors, returning the
         number of errors reported."""
+        self._check_alive()
         return await self._ch.cmd(self._ch.CMD_GET_ERRORS)
 
     async def get_insn_cnt(self) -> int:
+        self._check_alive()
         return await self._ch.cmd(self._ch.CMD_GET_INSN_CNT)
 
     async def release(self):
-        await self._ch.cmd(self._ch.CMD_RELEASE)
+        self._check_alive()
+        self._released = True
+        if not await self._ch.cmd(self._ch.CMD_RELEASE):
+            raise CosimError("CMD_RELEASE failed")

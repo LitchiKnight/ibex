@@ -31,7 +31,9 @@ class ChannelError(Exception):
 
 
 class CosimChannel:
-    # Command opcodes (keep in sync with tb/ibex_cocotb_tb.sv).
+    # Command opcodes. The tb has identically named localparams; drift
+    # between the two copies is detected at bring-up by the layout
+    # fingerprint CMD_INIT returns (see py/cosim.layout_fingerprint).
     CMD_INIT = 0
     CMD_STEP = 1
     CMD_GET_ERRORS = 2

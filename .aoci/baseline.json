@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-10-06T09:59:22Z",
-  "updated_at": "2026-10-07T04:35:32Z",
+  "updated_at": "2026-10-07T09:08:27Z",
   "files": {
     ".clang-format": {
       "role": "index",
@@ -142,9 +142,9 @@
     },
     "aoci.code.txt": {
       "role": "index",
-      "sha256": "9a179b9b2e33838607b12c796c5a22290e4e9f7b5266494c353a31a163771625",
-      "size": 119015,
-      "normalized_sha256": "9a179b9b2e33838607b12c796c5a22290e4e9f7b5266494c353a31a163771625"
+      "sha256": "30f09850ac150e0435ebfdd1e4bebfd74363f89eba356c816dfc2f354ff5b9fb",
+      "size": 119036,
+      "normalized_sha256": "30f09850ac150e0435ebfdd1e4bebfd74363f89eba356c816dfc2f354ff5b9fb"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -202,15 +202,15 @@
     },
     "cocotb/Makefile": {
       "role": "index",
-      "sha256": "76b115df6c4cf256fdc51b154c26869bdf9d4823dd7b369d19aa8c89609cba85",
-      "size": 8196,
-      "normalized_sha256": "76b115df6c4cf256fdc51b154c26869bdf9d4823dd7b369d19aa8c89609cba85"
+      "sha256": "bd44acec482266f37716e6e3d901b0fc316c4fa9e53323f1df9f1e7dd3d6045a",
+      "size": 8268,
+      "normalized_sha256": "bd44acec482266f37716e6e3d901b0fc316c4fa9e53323f1df9f1e7dd3d6045a"
     },
     "cocotb/PLAN.md": {
       "role": "index",
-      "sha256": "c59d1b6e9686ca61e416fbb421f1066b5bdf090ac22810751ca46ca909b5fdd8",
-      "size": 19682,
-      "normalized_sha256": "c59d1b6e9686ca61e416fbb421f1066b5bdf090ac22810751ca46ca909b5fdd8"
+      "sha256": "e63e57385a9bc183f5374dd9161fcfb97744b0355b398a2e17b62967177ed252",
+      "size": 22241,
+      "normalized_sha256": "e63e57385a9bc183f5374dd9161fcfb97744b0355b398a2e17b62967177ed252"
     },
     "cocotb/dpi/ibex_cocotb_dpi.cc": {
       "role": "index",
@@ -232,15 +232,15 @@
     },
     "cocotb/py/cosim.py": {
       "role": "index",
-      "sha256": "d54946cec427066ea01497112a22941c534ef64fbe687d2401eb2af8f756343e",
-      "size": 7024,
-      "normalized_sha256": "d54946cec427066ea01497112a22941c534ef64fbe687d2401eb2af8f756343e"
+      "sha256": "5958bd554d53b9009feb2dad1ec091c5ae5468a736ca1e9d07bb7df20eccd150",
+      "size": 10499,
+      "normalized_sha256": "5958bd554d53b9009feb2dad1ec091c5ae5468a736ca1e9d07bb7df20eccd150"
     },
     "cocotb/py/cosim_channel.py": {
       "role": "index",
-      "sha256": "e2b15e6acd82d99d02051f99df490937fa5410989406c19739588884ee3e99cf",
-      "size": 3263,
-      "normalized_sha256": "e2b15e6acd82d99d02051f99df490937fa5410989406c19739588884ee3e99cf"
+      "sha256": "cec7be90500b3d40d16cce2a92c698ce48c7a52ef0cff2ea4b160c8f2877ed3c",
+      "size": 3407,
+      "normalized_sha256": "cec7be90500b3d40d16cce2a92c698ce48c7a52ef0cff2ea4b160c8f2877ed3c"
     },
     "cocotb/py/env.py": {
       "role": "index",
@@ -268,9 +268,9 @@
     },
     "cocotb/py/scoreboard.py": {
       "role": "index",
-      "sha256": "ff11c1885a505ecb5f6b6387d4d75a812bc939c3f82faa82835f55e8d3fa841e",
-      "size": 6064,
-      "normalized_sha256": "ff11c1885a505ecb5f6b6387d4d75a812bc939c3f82faa82835f55e8d3fa841e"
+      "sha256": "f9c908770504fa6d31be79f5b78e88b847eb48d17c7e4e7b63e472ac335b875c",
+      "size": 8324,
+      "normalized_sha256": "f9c908770504fa6d31be79f5b78e88b847eb48d17c7e4e7b63e472ac335b875c"
     },
     "cocotb/py/tb_env.py": {
       "role": "index",
@@ -280,15 +280,15 @@
     },
     "cocotb/py/test_lib.py": {
       "role": "observe",
-      "sha256": "aae41afb64827e96fe072a89cfb5e63ca58908e6d9aea4e51e4c9bd78fd2551c",
-      "size": 4224,
-      "normalized_sha256": "aae41afb64827e96fe072a89cfb5e63ca58908e6d9aea4e51e4c9bd78fd2551c"
+      "sha256": "989d6325c21fcec06fadc89f43f82e01dd6c4c2d87a2774f22e734eecead3887",
+      "size": 4632,
+      "normalized_sha256": "989d6325c21fcec06fadc89f43f82e01dd6c4c2d87a2774f22e734eecead3887"
     },
     "cocotb/tb/ibex_cocotb_tb.sv": {
       "role": "index",
-      "sha256": "97c7dfd73a5bf8df0f1beb04956e42cb4dbb89288566e8a44d0dbea0c831159a",
-      "size": 21976,
-      "normalized_sha256": "97c7dfd73a5bf8df0f1beb04956e42cb4dbb89288566e8a44d0dbea0c831159a"
+      "sha256": "d8d39ce748f5195580ce8f2494cb590f6e4fe4967cb07a7074974083dafe5035",
+      "size": 23515,
+      "normalized_sha256": "d8d39ce748f5195580ce8f2494cb590f6e4fe4967cb07a7074974083dafe5035"
     },
     "cocotb/tests/sw/error_test.S": {
       "role": "observe",
@@ -310,9 +310,9 @@
     },
     "cocotb/tests/test_core.py": {
       "role": "observe",
-      "sha256": "514fda9885074a0ef126cc88d86a4f1a3df23e8e32c5440e24bfff373cd699b5",
-      "size": 2708,
-      "normalized_sha256": "514fda9885074a0ef126cc88d86a4f1a3df23e8e32c5440e24bfff373cd699b5"
+      "sha256": "b1493e05a970bdd5679fe90cafdf6e50dd3f106edf720e465817a97adaac3e02",
+      "size": 2695,
+      "normalized_sha256": "b1493e05a970bdd5679fe90cafdf6e50dd3f106edf720e465817a97adaac3e02"
     },
     "doc/.gitignore": {
       "role": "index",

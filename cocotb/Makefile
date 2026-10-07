@@ -155,11 +155,10 @@ COMPILE_ARGS = \
 
 # Runtime plusargs consumed by tb/ibex_cocotb_tb.sv (CMD_INIT) to load the
 # binary into the co-simulator, by the Python test for its own copy of the
-# image base address, and by py/tb_env.py for the agent knobs.
+# binary path and image base address, and by py/tb_env.py for the agent
+# knobs. The binary travels through this one channel so the Python memory
+# model and the co-simulator can never hold different images.
 COCOTB_PLUSARGS = +ibex_cocotb_bin=$(BIN) +ibex_cocotb_load_addr=$(IBEX_LOAD_ADDR) $(EXTRA_PLUSARGS) $(IBEX_COCOTB_OPTS)
-
-# Environment for the Python testbench.
-export IBEX_COCOTB_BIN = $(BIN)
 
 # C++ include paths for the DPI sources. Verilator's generated makefile uses
 # $(CPPFLAGS) from the environment (the -I entries cannot be passed through

@@ -7,8 +7,8 @@
 Every test runs a program on the cocotb testbench and checks each retired
 instruction against the SpikeCosim co-simulator (dv/cosim, compiled into
 the simulation unchanged). The program is selected with
-``make sim TEST=<name>`` and passed through the IBEX_COCOTB_BIN environment
-variable; the same binary is handed to the co-simulator through the
+``make sim TEST=<name>``; the binary travels to both the Python memory
+model and the co-simulator backdoor load through the single
 +ibex_cocotb_bin plusarg, and the image load base address through
 +ibex_cocotb_load_addr.
 

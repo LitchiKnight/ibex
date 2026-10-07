@@ -188,7 +188,9 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
   $fatal("Fatal error: RVFI needs to be defined globally.");
 `endif
 
-  // Command opcodes (keep in sync with cocotb/py/cosim_channel.py).
+  // Command opcodes. The Python side has identically numbered constants
+  // (cocotb/py/cosim_channel.py); drift between the two copies is detected
+  // at bring-up by the layout fingerprint CMD_INIT returns.
   localparam logic [7:0] CMD_INIT          = 8'h00;
   localparam logic [7:0] CMD_STEP          = 8'h01;
   localparam logic [7:0] CMD_GET_ERRORS    = 8'h02;
@@ -217,6 +219,30 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
 
   localparam int SETMIP_NMI_BIT          = 1;
   localparam int SETMIP_NMI_INT_BIT      = 2;
+
+  // FNV-1a (32-bit) over the command opcodes and the packed-argument bit
+  // positions. cocotb/py/cosim.py computes the same function from its own
+  // constants and CMD_INIT returns it, so any drift between the two sides
+  // fails bring-up instead of silently weakening the comparison. The
+  // result is forced odd so it can never collide with the 0 init-failure
+  // return value.
+  function automatic int unsigned layout_fingerprint();
+    int unsigned h = 32'h811c0001;
+    int unsigned values[22] = '{
+      32'(CMD_INIT), 32'(CMD_STEP), 32'(CMD_GET_ERRORS),
+      32'(CMD_GET_INSN_CNT), 32'(CMD_RELEASE), 32'(CMD_NOTIFY_DSIDE),
+      32'(CMD_SET_MIP), 32'(CMD_GET_ERROR_STR),
+      STEP_RD_ADDR_LSB, STEP_RF_WR_SUPPRESS_BIT, STEP_TRAP_BIT,
+      STEP_NMI_INT_BIT, STEP_NMI_BIT, STEP_DEBUG_REQ_BIT,
+      DSIDE_STORE_BIT, DSIDE_ERROR_BIT, DSIDE_MIS_FIRST_BIT,
+      DSIDE_MIS_SECOND_BIT, DSIDE_MIS_FIRST_ERR_BIT, DSIDE_M_MODE_BIT,
+      SETMIP_NMI_BIT, SETMIP_NMI_INT_BIT
+    };
+    for (int i = 0; i < $size(values); i++) begin
+      h = (h ^ values[i]) * 32'h01000193;
+    end
+    return h | 32'h1;
+  endfunction
 
   chandle     cosim_handle = null;
   string      bin_path     = "";
@@ -305,9 +331,10 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
     end else if (cmd_valid && !cmd_ack) begin
       cmd_ack <= 1'b1;
       if ((cosim_handle == null) && (cmd_op != CMD_INIT)) begin
-        // Every command except CMD_INIT requires an initialised co-simulator;
-        // fail loudly instead of dereferencing null in the DPI helpers.
-        $error("ibex_cocotb: cmd op 0x%0x issued before CMD_INIT", cmd_op);
+        // A command without a live co-simulator means it was issued before
+        // CMD_INIT or after CMD_RELEASE; fail loudly instead of
+        // dereferencing null in the DPI helpers.
+        $error("ibex_cocotb: cmd op 0x%0x issued before CMD_INIT or after CMD_RELEASE", cmd_op);
         cmd_ret0 <= 32'h0;
       end else begin
         unique case (cmd_op)
@@ -320,7 +347,10 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
               ISA_STRING, START_PC, START_MTVEC, bin_path, load_addr,
               PMPNumRegions, PMPGranularity, MHPMCounterNum,
               SecureIbex, ICache, DmBaseAddr, DmBaseAddr + DmAddrMask + 1);
-            cmd_ret0 <= (cosim_handle != null) ? 32'h1 : 32'h0;
+            // Success carries the layout fingerprint so the Python side can
+            // verify the two copies of the protocol agree; 0 is failure.
+            cmd_ret0 <= (cosim_handle != null) ? layout_fingerprint()
+                                               : 32'h0;
           end
           CMD_STEP: begin
             // Same call order as the UVM cosim scoreboard: debug_req, NMI,

@@ -20,9 +20,9 @@ processed/retired counters themselves.
 
 import logging
 
-from cocotb.triggers import Event, First, Timer
+from cocotb.triggers import Event, First, Timer, select
 
-from cosim import Cosim, CosimMismatchError
+from cosim import Cosim, CosimError, CosimMismatchError
 from rvfi_monitor import decode_crash_dump
 
 logger = logging.getLogger("cocotb.scoreboard")
@@ -30,6 +30,11 @@ logger = logging.getLogger("cocotb.scoreboard")
 # Upper bound on how many error strings the mismatch report pulls from the
 # co-simulator; anything beyond it is printed by the drain in finish().
 MAX_MISMATCH_ERRORS = 16
+
+# How long finish() waits for the comparison loop to exit after stop().
+# One step handshake is a handful of cycles and a wedge is detected after
+# 1000, so 100 us (10k cycles) is generous; exceeding it means a real bug.
+STOP_GRACE_NS = 100_000
 
 
 class Scoreboard:
@@ -48,17 +53,42 @@ class Scoreboard:
         self.processed = 0
         self.error = None
         self._progress = Event()
+        # finish() sets these to end the comparison loop: after the
+        # co-simulator is released the program's end loop keeps retiring,
+        # and there is nothing left to compare against.
+        self._stopped = False
+        self._stop_event = Event()
+        # Set when the comparison loop has actually exited (both the normal
+        # and the error path); finish() waits on it before releasing so no
+        # step command can be in flight across the release.
+        self._exited = Event()
 
     async def run(self):
         try:
             while True:
-                item = await self.monitor.get()
+                # select() races the stop event against the next RVFI
+                # item and cancels the loser; index 0 means stop() won.
+                # _stopped is checked again even when the item won: stop()
+                # and the release may both run while this coroutine is
+                # waiting to resume, and a post-release step is an error.
+                index, item = await select(self._stop_event.wait(),
+                                           self.monitor.get())
+                if index == 0 or self._stopped:
+                    return
                 await self.step_item(item)
                 self.processed += 1
                 self._progress.set()
         except Exception as error:
             self.error = error
             logger.error("scoreboard stopped: %s", error)
+        finally:
+            self._exited.set()
+
+    def stop(self):
+        """End the comparison loop; finish() calls this once the
+        co-simulator is being released. Idempotent."""
+        self._stopped = True
+        self._stop_event.set()
 
     async def step_item(self, item):
         if item.irq_only:
@@ -140,10 +170,24 @@ class Scoreboard:
                         self.processed, target, timeout_ns))
 
     async def finish(self) -> int:
+        # A comparison error appearing between the test's drain() and the
+        # release below would otherwise be written to self.error and never
+        # read again, silently passing the test; raise it instead.
+        if self.error is not None:
+            raise self.error
         insn_cnt = await self.cosim.get_insn_cnt()
         drained = await self.cosim.drain_errors()
         if drained:
             logger.warning("%d undrained cosim error(s) at release", drained)
+        if self.error is not None:
+            raise self.error
+        # The comparison ends here: signal the loop, wait until it has
+        # actually exited so no step command is in flight across the
+        # release, then release.
+        self.stop()
+        await First(self._exited.wait(), Timer(STOP_GRACE_NS, unit="ns"))
+        if not self._exited.is_set():
+            raise CosimError("scoreboard did not stop before release")
         await self.cosim.release()
         logger.info("SpikeCosim released after %d matched instructions",
                     insn_cnt)
