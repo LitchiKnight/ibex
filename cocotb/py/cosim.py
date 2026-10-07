@@ -22,6 +22,7 @@ unchanged; nothing here reimplements any checking.
 import logging
 from typing import TYPE_CHECKING
 
+from cmd_defs import (DSIDE_BITS, SETMIP_BITS, STEP_BITS, layout_values)
 from cosim_channel import CosimChannel
 
 if TYPE_CHECKING:
@@ -29,63 +30,37 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("cocotb.cosim")
 
-# Bit positions of the packed command arguments. These numbers exist in
-# the tb as identically named localparams as well; the fingerprint below
-# is the mechanism that detects drift between the two copies.
-STEP_RD_ADDR_LSB = 0
-STEP_RF_WR_SUPPRESS_BIT = 5
-STEP_TRAP_BIT = 6
-STEP_NMI_INT_BIT = 7
-STEP_NMI_BIT = 8
-STEP_DEBUG_REQ_BIT = 9
+# Bit positions of the packed command arguments, from the single layout
+# definition (py/cmd_defs.py); the tb includes the generated copy
+# (gen/out/cmd_defs.svh). The fingerprint below is a runtime sanity check
+# on top of that construction.
+STEP_RD_ADDR_LSB = STEP_BITS["STEP_RD_ADDR_LSB"]
+STEP_RF_WR_SUPPRESS_BIT = STEP_BITS["STEP_RF_WR_SUPPRESS_BIT"]
+STEP_TRAP_BIT = STEP_BITS["STEP_TRAP_BIT"]
+STEP_NMI_INT_BIT = STEP_BITS["STEP_NMI_INT_BIT"]
+STEP_NMI_BIT = STEP_BITS["STEP_NMI_BIT"]
+STEP_DEBUG_REQ_BIT = STEP_BITS["STEP_DEBUG_REQ_BIT"]
 
-DSIDE_STORE_BIT = 0
-DSIDE_ERROR_BIT = 1
-DSIDE_MIS_FIRST_BIT = 2
-DSIDE_MIS_SECOND_BIT = 3
-DSIDE_MIS_FIRST_ERR_BIT = 4
-DSIDE_M_MODE_BIT = 5
+DSIDE_STORE_BIT = DSIDE_BITS["DSIDE_STORE_BIT"]
+DSIDE_ERROR_BIT = DSIDE_BITS["DSIDE_ERROR_BIT"]
+DSIDE_MIS_FIRST_BIT = DSIDE_BITS["DSIDE_MIS_FIRST_BIT"]
+DSIDE_MIS_SECOND_BIT = DSIDE_BITS["DSIDE_MIS_SECOND_BIT"]
+DSIDE_MIS_FIRST_ERR_BIT = DSIDE_BITS["DSIDE_MIS_FIRST_ERR_BIT"]
+DSIDE_M_MODE_BIT = DSIDE_BITS["DSIDE_M_MODE_BIT"]
 
-SETMIP_NMI_BIT = 1
-SETMIP_NMI_INT_BIT = 2
-
-# The complete command layout in one table: opcode numbers followed by the
-# packed-argument bit positions.
-_LAYOUT_VALUES = (
-    CosimChannel.CMD_INIT,
-    CosimChannel.CMD_STEP,
-    CosimChannel.CMD_GET_ERRORS,
-    CosimChannel.CMD_GET_INSN_CNT,
-    CosimChannel.CMD_RELEASE,
-    CosimChannel.CMD_NOTIFY_DSIDE,
-    CosimChannel.CMD_SET_MIP,
-    CosimChannel.CMD_GET_ERROR_STR,
-    STEP_RD_ADDR_LSB,
-    STEP_RF_WR_SUPPRESS_BIT,
-    STEP_TRAP_BIT,
-    STEP_NMI_INT_BIT,
-    STEP_NMI_BIT,
-    STEP_DEBUG_REQ_BIT,
-    DSIDE_STORE_BIT,
-    DSIDE_ERROR_BIT,
-    DSIDE_MIS_FIRST_BIT,
-    DSIDE_MIS_SECOND_BIT,
-    DSIDE_MIS_FIRST_ERR_BIT,
-    DSIDE_M_MODE_BIT,
-    SETMIP_NMI_BIT,
-    SETMIP_NMI_INT_BIT,
-)
+SETMIP_NMI_BIT = SETMIP_BITS["SETMIP_NMI_BIT"]
+SETMIP_NMI_INT_BIT = SETMIP_BITS["SETMIP_NMI_INT_BIT"]
 
 
 def layout_fingerprint() -> int:
     """FNV-1a (32-bit) over the opcode numbers and the packed-argument bit
-    positions. tb/ibex_cocotb_tb.sv computes the same function from its
-    localparams and CMD_INIT returns it, so any drift between the two
-    sides fails bring-up instead of silently weakening the comparison. The
+    positions. tb/ibex_cocotb_tb.sv computes the same function from the
+    generated include (the same source table, so the two sides agree by
+    construction) and CMD_INIT returns it as a runtime sanity check. The
     result is forced odd so it can never collide with the 0 init-failure
     return value."""
     h = 0x811C0001
-    for value in _LAYOUT_VALUES:
+    for value in layout_values():
         h = ((h ^ value) * 0x01000193) & 0xFFFFFFFF
     return h | 1
 

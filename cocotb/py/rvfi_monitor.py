@@ -38,8 +38,16 @@ class RvfiItem:
     order: int
     pc: int
     insn: int
+    # Expanded encoding of the retired instruction (valid only when
+    # expanded_valid is set). rvfi_insn presents unexpanded compressed
+    # instructions as {16'b0, 16-bit encoding}; the coverage classifier
+    # needs the 32-bit form. The co-simulator keeps using ``insn`` exactly
+    # as before.
+    expanded_insn: int
+    expanded_valid: int
     trap: int
     intr: int
+    mode: int
     rd_addr: int
     rd_wdata: int
     rf_wr_suppress: int
@@ -49,6 +57,7 @@ class RvfiItem:
     nmi: int
     nmi_int: int
     debug_req: int
+    debug_mode: int
     # IRQ-only events carry no retired instruction; the scoreboard only
     # updates the co-simulator's interrupt state for them.
     irq_only: bool = False
@@ -63,10 +72,15 @@ class RVFIMonitor:
     ``get()`` returns the items strictly in retirement order and never drops
     one; ``retired_count`` counts only real retirements and is not decreased
     by ``get()``.
+
+    ``on_retire`` is an optional observer called with every retired item
+    (never the IRQ-only events) as it is produced; the coverage model is
+    its only user today.
     """
 
-    def __init__(self, dut):
+    def __init__(self, dut, on_retire=None):
         self.dut = dut
+        self.on_retire = on_retire
         self._queue = Queue()
         self.retired_count = 0
         self.trap_count = 0
@@ -106,8 +120,13 @@ class RVFIMonitor:
                 order=int(self.dut.rvfi_order.value),
                 pc=int(self.dut.rvfi_pc_rdata.value),
                 insn=int(self.dut.rvfi_insn.value),
+                expanded_insn=int(
+                    self.dut.rvfi_ext_expanded_insn.value),
+                expanded_valid=int(
+                    self.dut.rvfi_ext_expanded_insn_valid.value),
                 trap=int(self.dut.rvfi_trap.value),
                 intr=int(self.dut.rvfi_intr.value),
+                mode=int(self.dut.rvfi_mode.value),
                 rd_addr=int(self.dut.rvfi_rd_addr.value),
                 rd_wdata=int(self.dut.rvfi_rd_wdata.value),
                 rf_wr_suppress=int(self.dut.rvfi_ext_rf_wr_suppress.value),
@@ -117,6 +136,7 @@ class RVFIMonitor:
                 nmi=int(self.dut.rvfi_ext_nmi.value),
                 nmi_int=int(self.dut.rvfi_ext_nmi_int.value),
                 debug_req=int(self.dut.rvfi_ext_debug_req.value),
+                debug_mode=int(self.dut.rvfi_ext_debug_mode.value),
                 irq_only=irq_only,
                 crash_dump=int(self.dut.trap_crash_dump.value),
             )
@@ -143,6 +163,9 @@ class RVFIMonitor:
                     self.trap_count += 1
             else:
                 self.irq_only_count += 1
+
+            if not irq_only and self.on_retire is not None:
+                self.on_retire(item)
 
             self._queue.put_nowait(item)
 

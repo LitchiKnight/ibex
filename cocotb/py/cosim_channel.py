@@ -18,6 +18,8 @@ import logging
 
 from cocotb.triggers import Lock, RisingEdge
 
+from cmd_defs import OPCODES
+
 logger = logging.getLogger("cocotb.cosim_channel")
 
 # Upper bound (in clock cycles) for one command handshake. The handshake
@@ -31,17 +33,18 @@ class ChannelError(Exception):
 
 
 class CosimChannel:
-    # Command opcodes. The tb has identically named localparams; drift
-    # between the two copies is detected at bring-up by the layout
-    # fingerprint CMD_INIT returns (see py/cosim.layout_fingerprint).
-    CMD_INIT = 0
-    CMD_STEP = 1
-    CMD_GET_ERRORS = 2
-    CMD_GET_INSN_CNT = 3
-    CMD_RELEASE = 4
-    CMD_NOTIFY_DSIDE = 5
-    CMD_SET_MIP = 6
-    CMD_GET_ERROR_STR = 7
+    # Command opcodes from the single layout definition (py/cmd_defs.py);
+    # the tb includes the generated copy (gen/out/cmd_defs.svh), so the
+    # two sides can never drift. The layout fingerprint CMD_INIT returns
+    # remains as a runtime sanity check on top.
+    CMD_INIT = OPCODES["CMD_INIT"]
+    CMD_STEP = OPCODES["CMD_STEP"]
+    CMD_GET_ERRORS = OPCODES["CMD_GET_ERRORS"]
+    CMD_GET_INSN_CNT = OPCODES["CMD_GET_INSN_CNT"]
+    CMD_RELEASE = OPCODES["CMD_RELEASE"]
+    CMD_NOTIFY_DSIDE = OPCODES["CMD_NOTIFY_DSIDE"]
+    CMD_SET_MIP = OPCODES["CMD_SET_MIP"]
+    CMD_GET_ERROR_STR = OPCODES["CMD_GET_ERROR_STR"]
 
     def __init__(self, dut):
         self.dut = dut

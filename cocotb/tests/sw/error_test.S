@@ -31,20 +31,14 @@
 # signature address (0x8ffffff8) on pass, an odd write to the tohost
 # section (0x80001000) on fail (see mem_agent.classify_test_result).
 
-#define SIGNATURE_ADDR 0x8ffffff8
-#define TOHOST_ADDR    0x80001000
+#include "common.inc"
+
 #ifndef ERROR_ADDR
 #define ERROR_ADDR     0xdead0000
 #endif
 #define CAUSE_LOAD_ACCESS_FAULT 5
 
-  .section .text.init
-  .option norvc
-
-  .globl _start
-  .org 0x80
-_start:
-  j reset_vector
+  DIRECTED_TEST_ENTRY
 
   .org 0x100
 trap_handler:
@@ -75,14 +69,7 @@ handler_fail:
 
   .org 0x200
 reset_vector:
-  # PMP: permit all accesses (mirrors INIT_PMP in the vendored env).
-  li s0, -1
-  csrw pmpaddr0, s0
-  li s1, 0x1f                     # NAPOT | R | W | X
-  csrw pmpcfg0, s1
-
-  la s2, trap_handler
-  csrw mtvec, s2
+  DIRECTED_TEST_INIT
 
   la s3, fault_seen
   sw x0, 0(s3)
@@ -115,15 +102,7 @@ fail:
   sw s1, 0(s0)
   j done
 
-  # Anchor the .tohost section (the directed-test link script leaves it
-  # empty otherwise, which pulls .bss into the 0x80001000 slot that the
-  # environment watches as the tohost handshake address).
-  .pushsection .tohost, "aw", @progbits
-  .align 6
-  .global tohost
-tohost:
-  .dword 0
-  .popsection
+  DIRECTED_TEST_TOHOST_ANCHOR
 
   .bss
   .balign 4

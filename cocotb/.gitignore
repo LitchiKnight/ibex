@@ -1,6 +1,7 @@
 # Simulation outputs of the cocotb verification environment
 out/
 sim_build/
+gen/out/
 results.xml
 __pycache__/
 *.pyc

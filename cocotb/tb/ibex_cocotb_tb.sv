@@ -15,6 +15,12 @@
 
 `include "spike_cosim_dpi.svh"
 `include "cosim_dpi.svh"
+// Command opcodes and packed-argument bit positions, generated from the
+// single layout definition py/cmd_defs.py (see gen/cmd_defs.py); the
+// Python side imports the same numbers directly, so the two copies can
+// never drift. The CMD_INIT layout fingerprint remains as a runtime
+// sanity check on top.
+`include "cmd_defs.svh"
 
 module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
   // Cosim configuration. Only the values that cannot be derived from the DUT
@@ -168,6 +174,14 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
   output logic [31:0] rvfi_ext_mhpmcountersh [10],
   output logic        rvfi_ext_ic_scr_key_valid,
   output logic        rvfi_ext_irq_valid,
+  // Expanded form of the retired instruction. rvfi_insn presents
+  // unexpanded compressed instructions as {16'b0, 16-bit encoding}; the
+  // monitor uses this field instead whenever it is valid (the same choice
+  // as the UVM ibex_rvfi_monitor), so the coverage classifier always sees
+  // the 32-bit uncompressed encoding.
+  output logic        rvfi_ext_expanded_insn_valid,
+  output logic [31:0] rvfi_ext_expanded_insn,
+  output logic        rvfi_ext_expanded_insn_last,
 `endif
 
   // SpikeCosim command interface (driven by Python).
@@ -188,55 +202,24 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
   $fatal("Fatal error: RVFI needs to be defined globally.");
 `endif
 
-  // Command opcodes. The Python side has identically numbered constants
-  // (cocotb/py/cosim_channel.py); drift between the two copies is detected
-  // at bring-up by the layout fingerprint CMD_INIT returns.
-  localparam logic [7:0] CMD_INIT          = 8'h00;
-  localparam logic [7:0] CMD_STEP          = 8'h01;
-  localparam logic [7:0] CMD_GET_ERRORS    = 8'h02;
-  localparam logic [7:0] CMD_GET_INSN_CNT  = 8'h03;
-  localparam logic [7:0] CMD_RELEASE       = 8'h04;
-  localparam logic [7:0] CMD_NOTIFY_DSIDE  = 8'h05;
-  localparam logic [7:0] CMD_SET_MIP       = 8'h06;
-  localparam logic [7:0] CMD_GET_ERROR_STR = 8'h07;
-
-  // Bit positions of the packed CMD_STEP / CMD_NOTIFY_DSIDE arguments. The
-  // authoritative definition of the packing lives in cocotb/py/cosim.py,
-  // which is the only writer of these registers; this side only decodes it.
-  localparam int STEP_RD_ADDR_LSB        = 0;
-  localparam int STEP_RF_WR_SUPPRESS_BIT = 5;
-  localparam int STEP_TRAP_BIT           = 6;
-  localparam int STEP_NMI_INT_BIT        = 7;
-  localparam int STEP_NMI_BIT            = 8;
-  localparam int STEP_DEBUG_REQ_BIT      = 9;
-
-  localparam int DSIDE_STORE_BIT         = 0;
-  localparam int DSIDE_ERROR_BIT         = 1;
-  localparam int DSIDE_MIS_FIRST_BIT     = 2;
-  localparam int DSIDE_MIS_SECOND_BIT    = 3;
-  localparam int DSIDE_MIS_FIRST_ERR_BIT = 4;
-  localparam int DSIDE_M_MODE_BIT        = 5;
-
-  localparam int SETMIP_NMI_BIT          = 1;
-  localparam int SETMIP_NMI_INT_BIT      = 2;
-
   // FNV-1a (32-bit) over the command opcodes and the packed-argument bit
-  // positions. cocotb/py/cosim.py computes the same function from its own
-  // constants and CMD_INIT returns it, so any drift between the two sides
-  // fails bring-up instead of silently weakening the comparison. The
-  // result is forced odd so it can never collide with the 0 init-failure
-  // return value.
+  // positions. Both sides derive their numbers from the single layout
+  // definition (py/cmd_defs.py, rendered into the cmd_defs.svh include
+  // above), so this fingerprint is a runtime sanity check rather than a
+  // drift detector; CMD_INIT returns it so the Python side verifies the
+  // two copies agree. The result is forced odd so it can never collide
+  // with the 0 init-failure return value.
   function automatic int unsigned layout_fingerprint();
     int unsigned h = 32'h811c0001;
     int unsigned values[22] = '{
-      32'(CMD_INIT), 32'(CMD_STEP), 32'(CMD_GET_ERRORS),
-      32'(CMD_GET_INSN_CNT), 32'(CMD_RELEASE), 32'(CMD_NOTIFY_DSIDE),
-      32'(CMD_SET_MIP), 32'(CMD_GET_ERROR_STR),
-      STEP_RD_ADDR_LSB, STEP_RF_WR_SUPPRESS_BIT, STEP_TRAP_BIT,
-      STEP_NMI_INT_BIT, STEP_NMI_BIT, STEP_DEBUG_REQ_BIT,
-      DSIDE_STORE_BIT, DSIDE_ERROR_BIT, DSIDE_MIS_FIRST_BIT,
-      DSIDE_MIS_SECOND_BIT, DSIDE_MIS_FIRST_ERR_BIT, DSIDE_M_MODE_BIT,
-      SETMIP_NMI_BIT, SETMIP_NMI_INT_BIT
+      32'(`CMD_INIT), 32'(`CMD_STEP), 32'(`CMD_GET_ERRORS),
+      32'(`CMD_GET_INSN_CNT), 32'(`CMD_RELEASE), 32'(`CMD_NOTIFY_DSIDE),
+      32'(`CMD_SET_MIP), 32'(`CMD_GET_ERROR_STR),
+      `STEP_RD_ADDR_LSB, `STEP_RF_WR_SUPPRESS_BIT, `STEP_TRAP_BIT,
+      `STEP_NMI_INT_BIT, `STEP_NMI_BIT, `STEP_DEBUG_REQ_BIT,
+      `DSIDE_STORE_BIT, `DSIDE_ERROR_BIT, `DSIDE_MIS_FIRST_BIT,
+      `DSIDE_MIS_SECOND_BIT, `DSIDE_MIS_FIRST_ERR_BIT, `DSIDE_M_MODE_BIT,
+      `SETMIP_NMI_BIT, `SETMIP_NMI_INT_BIT
     };
     for (int i = 0; i < $size(values); i++) begin
       h = (h ^ values[i]) * 32'h01000193;
@@ -330,7 +313,7 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
       cmd_ret0 <= '0;
     end else if (cmd_valid && !cmd_ack) begin
       cmd_ack <= 1'b1;
-      if ((cosim_handle == null) && (cmd_op != CMD_INIT)) begin
+      if ((cosim_handle == null) && (cmd_op != `CMD_INIT)) begin
         // A command without a live co-simulator means it was issued before
         // CMD_INIT or after CMD_RELEASE; fail loudly instead of
         // dereferencing null in the DPI helpers.
@@ -338,7 +321,7 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
         cmd_ret0 <= 32'h0;
       end else begin
         unique case (cmd_op)
-          CMD_INIT: begin
+          `CMD_INIT: begin
             void'($value$plusargs("ibex_cocotb_bin=%s", bin_path));
             if (!$value$plusargs("ibex_cocotb_load_addr=%h", load_addr)) begin
               load_addr = BootAddr;
@@ -352,48 +335,48 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
             cmd_ret0 <= (cosim_handle != null) ? layout_fingerprint()
                                                : 32'h0;
           end
-          CMD_STEP: begin
+          `CMD_STEP: begin
             // Same call order as the UVM cosim scoreboard: debug_req, NMI,
             // internal NMI, MIP, mcycle, then step.
-            riscv_cosim_set_debug_req(cosim_handle, cmd_a2[STEP_DEBUG_REQ_BIT]);
-            riscv_cosim_set_nmi(cosim_handle, cmd_a2[STEP_NMI_BIT]);
-            riscv_cosim_set_nmi_int(cosim_handle, cmd_a2[STEP_NMI_INT_BIT]);
+            riscv_cosim_set_debug_req(cosim_handle, cmd_a2[`STEP_DEBUG_REQ_BIT]);
+            riscv_cosim_set_nmi(cosim_handle, cmd_a2[`STEP_NMI_BIT]);
+            riscv_cosim_set_nmi_int(cosim_handle, cmd_a2[`STEP_NMI_INT_BIT]);
             riscv_cosim_set_mip(cosim_handle, cmd_a3, cmd_a4);
             riscv_cosim_set_mcycle(cosim_handle, {cmd_a6, cmd_a5});
             cmd_ret0 <= riscv_cosim_step(cosim_handle,
-                                         cmd_a2[4:STEP_RD_ADDR_LSB], cmd_a1,
-                                         cmd_a0, cmd_a2[STEP_TRAP_BIT],
-                                         cmd_a2[STEP_RF_WR_SUPPRESS_BIT]);
+                                         cmd_a2[4:`STEP_RD_ADDR_LSB], cmd_a1,
+                                         cmd_a0, cmd_a2[`STEP_TRAP_BIT],
+                                         cmd_a2[`STEP_RF_WR_SUPPRESS_BIT]);
           end
-          CMD_GET_ERRORS: begin
+          `CMD_GET_ERRORS: begin
             cmd_ret0 <= ibex_cocotb_drain_errors(cosim_handle);
           end
-          CMD_GET_INSN_CNT: begin
+          `CMD_GET_INSN_CNT: begin
             cmd_ret0 <= ibex_cocotb_get_insn_cnt(cosim_handle);
           end
-          CMD_RELEASE: begin
+          `CMD_RELEASE: begin
             spike_cosim_release(cosim_handle);
             cosim_handle = null;
             cmd_ret0 <= 32'h1;
           end
-          CMD_NOTIFY_DSIDE: begin
+          `CMD_NOTIFY_DSIDE: begin
             riscv_cosim_notify_dside_access(cosim_handle,
-              cmd_a3[DSIDE_STORE_BIT], cmd_a0, cmd_a1, cmd_a2[3:0],
-              cmd_a3[DSIDE_ERROR_BIT], cmd_a3[DSIDE_MIS_FIRST_BIT],
-              cmd_a3[DSIDE_MIS_SECOND_BIT], cmd_a3[DSIDE_MIS_FIRST_ERR_BIT],
-              cmd_a3[DSIDE_M_MODE_BIT]);
+              cmd_a3[`DSIDE_STORE_BIT], cmd_a0, cmd_a1, cmd_a2[3:0],
+              cmd_a3[`DSIDE_ERROR_BIT], cmd_a3[`DSIDE_MIS_FIRST_BIT],
+              cmd_a3[`DSIDE_MIS_SECOND_BIT], cmd_a3[`DSIDE_MIS_FIRST_ERR_BIT],
+              cmd_a3[`DSIDE_M_MODE_BIT]);
             cmd_ret0 <= 32'h1;
           end
-          CMD_SET_MIP: begin
+          `CMD_SET_MIP: begin
             // IRQ-only RVFI event: same call order as the UVM scoreboard's
             // irq_only branch (set_nmi, set_nmi_int, set_mip(pre, pre), no
             // step).
-            riscv_cosim_set_nmi(cosim_handle, cmd_a2[SETMIP_NMI_BIT]);
-            riscv_cosim_set_nmi_int(cosim_handle, cmd_a2[SETMIP_NMI_INT_BIT]);
+            riscv_cosim_set_nmi(cosim_handle, cmd_a2[`SETMIP_NMI_BIT]);
+            riscv_cosim_set_nmi_int(cosim_handle, cmd_a2[`SETMIP_NMI_INT_BIT]);
             riscv_cosim_set_mip(cosim_handle, cmd_a3, cmd_a3);
             cmd_ret0 <= 32'h1;
           end
-          CMD_GET_ERROR_STR: begin
+          `CMD_GET_ERROR_STR: begin
             // Indexed comparison error string, transferred 32 bits at a
             // time: a0 is the error index, a1 the word index (byte i at
             // bits [8*(i%4)+7:8*(i%4)] of word i/4), or 0xFFFFFFFF for the
@@ -552,9 +535,9 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
     .rvfi_ext_mhpmcountersh,
     .rvfi_ext_ic_scr_key_valid,
     .rvfi_ext_irq_valid,
-    .rvfi_ext_expanded_insn_valid(),
-    .rvfi_ext_expanded_insn      (),
-    .rvfi_ext_expanded_insn_last (),
+    .rvfi_ext_expanded_insn_valid,
+    .rvfi_ext_expanded_insn,
+    .rvfi_ext_expanded_insn_last,
 `endif
 
     .fetch_enable_i            (IbexMuBiOn),

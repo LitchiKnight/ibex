@@ -113,7 +113,10 @@ class IbexIrqAgent:
                  if not line.is_nmi or self.cfg.nmi_enabled]
         num = random.choices(range(len(lines)),
                              weights=_count_weights(len(lines)))[0]
-        return random.sample(lines, num) if num else []
+        picked = random.sample(lines, num) if num else []
+        logger.debug("irq draw: %d line(s) [%s]", num,
+                     ", ".join(line.name for line in picked))
+        return picked
 
     async def _wait(self, cycles):
         for _ in range(cycles):
@@ -134,8 +137,10 @@ class IbexIrqAgent:
         if nmi_lines:
             await self._wait(self.cfg.nmi_hold_cycles)
             await self._drive(nmi_lines, 0)
-        await self._wait(random.randint(self.cfg.hold_cycles_min,
-                                        self.cfg.hold_cycles_max))
+        hold = random.randint(self.cfg.hold_cycles_min,
+                              self.cfg.hold_cycles_max)
+        logger.debug("irq hold: %d cycles", hold)
+        await self._wait(hold)
         await self._drive(lines, 0)
 
     async def run(self):
@@ -145,8 +150,10 @@ class IbexIrqAgent:
         logger.info("irq agent: raising random interrupts "
                     "(nmi=%s)", self.cfg.nmi_enabled)
         while True:
-            await self._wait(random.randint(self.cfg.idle_cycles_min,
-                                            self.cfg.idle_cycles_max))
+            idle = random.randint(self.cfg.idle_cycles_min,
+                                  self.cfg.idle_cycles_max)
+            logger.debug("irq idle: %d cycles", idle)
+            await self._wait(idle)
             lines = self._pick_lines()
             if lines:
                 self.raise_count += 1

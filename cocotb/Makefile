@@ -116,6 +116,9 @@ BIN := $(OUT_DIR)/$(TESTSUITE)_$(TEST).bin
 #   +ibex_cocotb_spurious_resp=1  request spurious dside responses
 #   +ibex_cocotb_irq=0            disable the IRQ agent
 #   +ibex_cocotb_irq_nmi=1        include the NMI line in the IRQ agent
+#   +ibex_cocotb_cov=0            disable the functional coverage model
+#                                 (M4, py/coverage.py; reported to
+#                                 out/coverage_<test>.xml when enabled)
 IBEX_COCOTB_OPTS ?=
 
 # Image load base address: the Python memory model loads the binary here and
@@ -126,6 +129,18 @@ IBEX_LOAD_ADDR ?= 80000000
 # The tb is elaborated first; ibex_rtl.f carries the RTL/prims file list.
 VERILOG_SOURCES = $(COCOTB_DIR)/tb/ibex_cocotb_tb.sv
 
+# Command-interface layout include, generated from the single definition
+# (py/cmd_defs.py) before elaboration, so the tb and the Python side can
+# never hold different opcode numbers or packed bit positions (the CMD_INIT
+# layout fingerprint remains as a runtime sanity check on top).
+CMD_DEFS_SVH := $(COCOTB_DIR)/gen/out/cmd_defs.svh
+
+$(CMD_DEFS_SVH): $(COCOTB_DIR)/py/cmd_defs.py $(COCOTB_DIR)/gen/cmd_defs.py
+	mkdir -p $(dir $@)
+	cd $(COCOTB_DIR) && PYTHONPATH=py python3 gen/cmd_defs.py $@
+
+CUSTOM_COMPILE_DEPS = $(CMD_DEFS_SVH)
+
 # Verilator options for the elaboration step. The lint waiver must come
 # before any other Verilog file; --timing is required because the design
 # uses the SV-generated clock and the ibex_top clock-gate latch.
@@ -133,6 +148,7 @@ VERILATOR_OPTS = \
   $(IBEX_ROOT)/lint/verilator_waiver.vlt \
   +define+RVFI \
   -f $(COCOTB_DIR)/ibex_rtl.f \
+  -I$(COCOTB_DIR)/gen/out \
   --timing \
   --unroll-count 72 \
   -Wno-fatal

@@ -10,13 +10,15 @@ Mirrors ``dv/uvm/core_ibex/common/ibex_mem_intf_agent``
 - grant/rvalid delays follow the same weighted distribution as the UVM agent
   (min heavily favoured, medium and slow rare); ``zero_delay_pct`` of runs
   pick zero delays everywhere, again as in the UVM config;
-- spurious data-side responses are only driven while the data port is not
-  serving a request, after a randomised inter-spurious delay, and only when
-  the DUT is a secure configuration: with ``SecureIbex=0`` the core trusts
-  the bus protocol and a stray response corrupts it, so tb_env forces the
+- spurious data-side responses are fired by the data-port serving loop
+  while the port is idle (the UVM ``outstanding_accesses == 0``
+  condition), after a randomised inter-spurious delay, and only when the
+  DUT is a secure configuration: with ``SecureIbex=0`` the core trusts the
+  bus protocol and a stray response corrupts it, so tb_env forces the
   feature off exactly like the UVM base test (``g_check_mem_response`` in
-  ibex_core.sv is the RTL gate). Spurious responses are never notified to
-  the co-simulator;
+  ibex_core.sv is the RTL gate). The loop is the single owner of the
+  data-port signals, so no request can ever be disturbed by a spurious
+  response. Spurious responses are never notified to the co-simulator;
 - error injection: either permanent for addresses in ``error_addrs`` (used
   by the dedicated error test) or one-shot through ``inject_error()`` (the
   UVM ``error_synch`` knob, available to tests). Accesses to the handshake
@@ -50,38 +52,47 @@ _PAGE_MASK = _PAGE_SIZE - 1
 @dataclass(frozen=True)
 class DelayDist:
     """A randomised cycle-count distribution mirroring the UVM ``dist``
-    constraints: the minimum is heavily favoured, the middle range gets a
-    fixed weight and the maximum is rare. The buckets and weights are
-    computed once at construction time."""
+    constraints. UVM uses two shapes, both expressed as four per-value
+    weights over the buckets [min], [min+1 : max/2-1], [max/2 : max-1],
+    [max]:
+
+    - the grant delay (``ibex_mem_intf_response_driver.sv``,
+      ``send_grant``): min :/ 10, the whole [min+1 : max-1] range :/ 1,
+      max :/ 1 (both middle buckets weight 1);
+    - the rvalid delay (``ibex_mem_intf_response_seq_lib.sv``, the
+      ``rvalid_delay`` dist): min :/ 5, [min+1 : max/2-1] :/ 3,
+      [max/2 : max-1] :/ 1, max :/ 1.
+    """
 
     minimum: int
     maximum: int
-    fast_weight: int
-    mid_weight: int
-    medium_weight: int
-    slow_weight: int
+    min_weight: int
+    low_mid_weight: int
+    high_mid_weight: int
+    max_weight: int
 
     def choices(self):
         if self.maximum <= self.minimum:
             return [self.minimum], [1]
-        mid = (self.minimum + self.maximum) // 2
+        mid = self.maximum // 2
         if mid <= self.minimum:
             mid = self.minimum + 1
         buckets = [self.minimum, *range(self.minimum + 1, mid),
                    *range(mid, self.maximum), self.maximum]
-        weights = ([self.fast_weight]
-                   + [self.mid_weight] * max(0, mid - self.minimum - 1)
-                   + [self.medium_weight] * max(0, self.maximum - mid)
-                   + [self.slow_weight])
+        weights = ([self.min_weight]
+                   + [self.low_mid_weight] * max(0, mid - self.minimum - 1)
+                   + [self.high_mid_weight] * max(0, self.maximum - mid)
+                   + [self.max_weight])
         return buckets, weights
 
 
-# UVM response_agent_cfg distributions: grant favours min at 10:1:1, rvalid
-# favours min at 5 with a fixed-weight middle band.
-GNT_DELAY = DelayDist(minimum=0, maximum=10, fast_weight=10, mid_weight=3,
-                      medium_weight=1, slow_weight=1)
-VALID_DELAY = DelayDist(minimum=0, maximum=20, fast_weight=5, mid_weight=3,
-                        medium_weight=1, slow_weight=1)
+# UVM response_agent distributions (see DelayDist): the grant favours its
+# minimum at 10 with every other value weighted 1, the rvalid favours its
+# minimum at 5 with the lower middle band weighted 3.
+GNT_DELAY = DelayDist(minimum=0, maximum=10, min_weight=10,
+                      low_mid_weight=1, high_mid_weight=1, max_weight=1)
+VALID_DELAY = DelayDist(minimum=0, maximum=20, min_weight=5,
+                        low_mid_weight=3, high_mid_weight=1, max_weight=1)
 
 
 @dataclass(frozen=True)
@@ -153,6 +164,24 @@ class DsideAccess:
     m_mode_access: bool = True
 
 
+@dataclass(frozen=True)
+class BusEvent:
+    """One served bus transaction, reported to observers once its response
+    has been driven (the coverage model is the only observer today).
+    ``added_delay`` is the grant delay plus the valid delay in cycles; the
+    agent serves transactions serially, so zero is the protocol minimum."""
+
+    is_instr: bool
+    addr: int
+    store: bool = False
+    error: bool = False
+    misaligned_first: bool = False
+    misaligned_second: bool = False
+    misaligned_first_saw_error: bool = False
+    m_mode: bool = True
+    added_delay: int = 0
+
+
 class IbexMemAgent:
     """Page-backed sparse memory for the instruction and data interfaces.
 
@@ -163,7 +192,7 @@ class IbexMemAgent:
     """
 
     def __init__(self, dut, cfg: MemAgentConfig, handshake: TestHandshake,
-                 on_access=None):
+                 on_access=None, on_bus_event=None):
         self.dut = dut
         self.cfg = cfg
         self.handshake = handshake
@@ -186,13 +215,16 @@ class IbexMemAgent:
         # has been driven; the scoreboard uses it to notify the
         # co-simulator.
         self.on_access = on_access
+        # Observer called with a BusEvent for every served transaction once
+        # its response has been driven; the coverage model uses it.
+        self.on_bus_event = on_bus_event
         # One-shot error injection (UVM error_synch: affects the very next
         # dside transaction, then clears).
         self._inject_error = False
-        # True from the moment a data request is taken over until its
-        # response pulse completes; the spurious-response task may not fire
-        # while this is set.
-        self._data_bus_busy = False
+        # Sticky failure of the serving loops (e.g. the co-simulator
+        # notification raised): wait_for_result raises it instead of timing
+        # out, so the failure is attributed to its cause.
+        self.error = None
         # Chosen once per run, like the UVM zero_delays rand bit.
         self._zero_delays = (
             random.choices([True, False],
@@ -247,8 +279,11 @@ class IbexMemAgent:
         ``done_event`` fires on every watched write, but only some of those
         writes carry a result (the first signature write is a CORE_STATUS
         marker), so keep waiting until classification succeeds or a full
-        timeout elapses without any new write."""
+        timeout elapses without any new write. A sticky serving error (see
+        ``error``) is raised immediately instead of a timeout."""
         while True:
+            if self.error is not None:
+                raise self.error
             self.done_event.clear()
             await First(self.done_event.wait(), Timer(timeout_ns, unit="ns"))
             for addr, data in self.observed_writes:
@@ -286,16 +321,22 @@ class IbexMemAgent:
     def _grant_delay(self):
         if self._zero_delays:
             return 0
-        return random.choices(*self._gnt_choices)[0]
+        delay = random.choices(*self._gnt_choices)[0]
+        logger.debug("gnt delay draw: %d cycles", delay)
+        return delay
 
     def _valid_delay(self):
         if self._zero_delays:
             return 0
-        return random.choices(*self._valid_choices)[0]
+        delay = random.choices(*self._valid_choices)[0]
+        logger.debug("rvalid delay draw: %d cycles", delay)
+        return delay
 
     def _spurious_delay(self):
-        return random.randint(self.cfg.spurious_response_delay_min,
-                              self.cfg.spurious_response_delay_max)
+        delay = random.randint(self.cfg.spurious_response_delay_min,
+                               self.cfg.spurious_response_delay_max)
+        logger.debug("spurious delay draw: %d cycles", delay)
+        return delay
 
     # -- bus driving ----------------------------------------------------------
 
@@ -326,42 +367,6 @@ class IbexMemAgent:
         rvalid.value = 0
         err.value = 0
 
-    # -- spurious responses ----------------------------------------------------
-
-    async def _maybe_spurious(self):
-        """Fire a spurious dside response when the inter-spurious delay has
-        elapsed and the data port is not serving a request (the UVM
-        ``outstanding_accesses == 0`` condition). Not forwarded to
-        ``on_access``: the core ignores stray responses, so the co-simulator
-        must never see them."""
-        if not self.cfg.enable_spurious_response:
-            return
-        delay = self._spurious_delay()
-        while True:
-            await RisingEdge(self.dut.clk_o)
-            if delay > 0:
-                delay -= 1
-                continue
-            if self._data_bus_busy:
-                # A request is being served; never disturb the data port.
-                delay = self._spurious_delay()
-                continue
-            # UVM semantics: a spurious response has a random payload and a
-            # random error bit. The core gates stray responses with
-            # (outstanding_load_wb | expecting_load_resp_id), so this is
-            # safe: with no outstanding access nothing consumes it.
-            spurious_data = random.getrandbits(32)
-            spurious_err = random.getrandbits(1)
-            logger.debug("spurious response cycle %d (data=0x%08x, err=%d)",
-                         cocotb.utils.get_sim_time(unit="ns") // 10,
-                         spurious_data, spurious_err)
-            await self._drive_response(
-                self.dut.data_rvalid_i, self.dut.data_rdata_i,
-                self.dut.data_err_i, spurious_data, spurious_err,
-                "spurious")
-            self.spurious_count += 1
-            delay = self._spurious_delay()
-
     # -- request serving --------------------------------------------------------
 
     async def _serve_instr_port(self):
@@ -374,21 +379,53 @@ class IbexMemAgent:
             logger.debug("instr req cycle %d addr 0x%08x -> 0x%08x",
                          cocotb.utils.get_sim_time(unit="ns") // 10,
                          request_addr, response_data)
-            await self._wait_cycles(self._grant_delay())
+            gnt_delay = self._grant_delay()
+            await self._wait_cycles(gnt_delay)
             await self._drive_grant(self.dut.instr_gnt_i, "instr")
-            await self._wait_cycles(self._valid_delay())
+            valid_delay = self._valid_delay()
+            await self._wait_cycles(valid_delay)
             await self._drive_response(
                 self.dut.instr_rvalid_i, self.dut.instr_rdata_i,
                 self.dut.instr_err_i, response_data, 0, "instr")
+            if self.on_bus_event is not None:
+                self.on_bus_event(BusEvent(
+                    is_instr=True, addr=request_addr,
+                    added_delay=gnt_delay + valid_delay))
 
     async def _serve_data_port(self):
+        """Serve data requests and spurious responses. This loop is the
+        single owner of the data-port response signals: a spurious response
+        is only fired while the port is idle, in this same loop, so no
+        second task can ever touch the port while a request is in flight
+        (the UVM ``outstanding_accesses == 0`` condition, structurally
+        guaranteed instead of guarded by a flag)."""
+        spurious_delay = self._spurious_delay()
         while True:
             await RisingEdge(self.dut.clk_o)
             if not int(self.dut.data_req_o.value):
+                if (self.cfg.enable_spurious_response
+                        and spurious_delay <= 0):
+                    # UVM semantics: a spurious response has a random
+                    # payload and a random error bit. The core gates stray
+                    # responses with (outstanding_load_wb |
+                    # expecting_load_resp_id), so with no outstanding
+                    # access nothing consumes it. Not forwarded to
+                    # ``on_access``: the co-simulator must never see them.
+                    spurious_data = random.getrandbits(32)
+                    spurious_err = random.getrandbits(1)
+                    logger.debug("spurious response cycle %d "
+                                 "(data=0x%08x, err=%d)",
+                                 cocotb.utils.get_sim_time(unit="ns") // 10,
+                                 spurious_data, spurious_err)
+                    await self._drive_response(
+                        self.dut.data_rvalid_i, self.dut.data_rdata_i,
+                        self.dut.data_err_i, spurious_data, spurious_err,
+                        "spurious")
+                    self.spurious_count += 1
+                    spurious_delay = self._spurious_delay()
+                elif spurious_delay > 0:
+                    spurious_delay -= 1
                 continue
-            # From here until the response pulse completes the data port is
-            # ours; the spurious-response task must stay away.
-            self._data_bus_busy = True
 
             # Capture the request phase; the outputs deassert in the grant
             # cycle, so everything must be read here.
@@ -397,7 +434,8 @@ class IbexMemAgent:
             request_data = int(self.dut.data_wdata_o.value)
             request_be = int(self.dut.data_be_o.value)
 
-            await self._wait_cycles(self._grant_delay())
+            gnt_delay = self._grant_delay()
+            await self._wait_cycles(gnt_delay)
             await self._drive_grant(self.dut.data_gnt_i, "data")
 
             # Access classification latched by the tb at the address phase
@@ -412,7 +450,8 @@ class IbexMemAgent:
             m_mode = int(self.dut.data_m_mode_o.value)
 
             error = self._take_error_for(request_addr)
-            await self._wait_cycles(self._valid_delay())
+            valid_delay = self._valid_delay()
+            await self._wait_cycles(valid_delay)
 
             if is_store:
                 self.store_count += 1
@@ -441,7 +480,6 @@ class IbexMemAgent:
             await self._drive_response(
                 self.dut.data_rvalid_i, self.dut.data_rdata_i,
                 self.dut.data_err_i, response_data, int(error), "data")
-            self._data_bus_busy = False
 
             if error:
                 self.error_count += 1
@@ -458,12 +496,27 @@ class IbexMemAgent:
 
             # The co-simulator contract requires accesses to be notified once
             # their response is seen; the notify handshake runs while the bus
-            # is idle.
-            if self.on_access is not None:
-                await self.on_access(access)
+            # is idle. A failing notification (e.g. a wedged command
+            # interface) is a sticky agent error: wait_for_result raises it
+            # instead of letting the run limp on and time out.
+            try:
+                if self.on_access is not None:
+                    await self.on_access(access)
+            except Exception as exc:
+                self.error = exc
+                logger.error("mem agent: dside notification failed: %s", exc)
+                return
+
+            if self.on_bus_event is not None:
+                self.on_bus_event(BusEvent(
+                    is_instr=False, addr=request_addr, store=is_store,
+                    error=bool(error), misaligned_first=bool(mis_first),
+                    misaligned_second=bool(mis_second),
+                    misaligned_first_saw_error=bool(mis_first_saw_err),
+                    m_mode=bool(m_mode),
+                    added_delay=gnt_delay + valid_delay))
 
     async def run(self):
         # The loops run forever; gather reports a failure in any of them by
         # cancelling the others and raising.
-        await gather(self._serve_instr_port(), self._serve_data_port(),
-                     self._maybe_spurious())
+        await gather(self._serve_instr_port(), self._serve_data_port())

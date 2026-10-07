@@ -65,8 +65,9 @@ async def run_ibex_test(dut, cfg=None):
     if cfg is None:
         cfg = IbexCocotbConfig()
 
-    env = await bring_up(dut, cfg, bin_path_from_plusargs(),
-                         load_addr_from_plusargs())
+    bin_path = bin_path_from_plusargs()
+    load_addr = load_addr_from_plusargs()
+    env = await bring_up(dut, cfg, bin_path, load_addr)
     mem, monitor, scoreboard = env.mem, env.monitor, env.scoreboard
 
     result = await mem.wait_for_result(RESULT_WRITE_TIMEOUT_NS)
@@ -95,9 +96,17 @@ async def run_ibex_test(dut, cfg=None):
                 mem.error_count, env.irq.raise_count,
                 monitor.irq_only_count, monitor.raw_irq_cycles)
 
+    # Report the functional coverage before the final pass/fail assertion,
+    # so a failing test still leaves its coverage database behind.
+    if env.coverage is not None:
+        env.coverage.report(
+            Path("out") / ("coverage_" + Path(bin_path).stem + ".xml"))
+
     # The program reported a pass and every compared instruction matched
     # the co-simulator. The matched count may lag the retired count by one
     # or two loop iterations because the tests end in an infinite branch.
+    assert env.mem.error is None, (
+        "memory agent failed mid-run: {}".format(env.mem.error))
     assert result == "pass", (
         "test failed: result={}, last observed write={}".format(
             result, mem.observed_writes[-1] if mem.observed_writes else None))

@@ -23,6 +23,7 @@ from cocotb.triggers import RisingEdge, Timer
 
 from cosim import Cosim
 from cosim_channel import CosimChannel
+from coverage import IbexCoverage
 from env import IbexCocotbConfig
 from irq_agent import IbexIrqAgent, IrqAgentConfig
 from mem_agent import IbexMemAgent, MemAgentConfig, TestHandshake
@@ -40,6 +41,7 @@ class Env:
     irq: IbexIrqAgent
     monitor: RVFIMonitor
     scoreboard: Scoreboard
+    coverage: IbexCoverage | None
 
 
 def _bool_plusarg(name, default):
@@ -142,11 +144,19 @@ async def bring_up(dut, cfg: IbexCocotbConfig, bin_path, load_addr: int) -> Env:
     # agent's access notifications are serialised by the channel's lock.
     channel = CosimChannel(dut)
     cosim = Cosim(channel)
-    monitor = RVFIMonitor(dut)
+    # The coverage model observes the monitor and the memory agent through
+    # their callbacks; it has no effect on the comparison flow.
+    coverage = (IbexCoverage()
+                if _bool_plusarg("ibex_cocotb_cov", cfg.coverage_enable)
+                else None)
+    monitor = RVFIMonitor(dut, on_retire=coverage.on_retire if coverage
+                          else None)
     scoreboard = Scoreboard(cosim, monitor)
     handshake = TestHandshake(cfg.signature_addr, cfg.tohost_addr)
     mem = IbexMemAgent(dut, _resolve_mem_cfg(cfg, dut), handshake,
-                       on_access=cosim.notify_dside)
+                       on_access=cosim.notify_dside,
+                       on_bus_event=coverage.on_bus_event if coverage
+                       else None)
     irq = IbexIrqAgent(dut, _resolve_irq_cfg(cfg))
 
     await cosim.init_cosim()
@@ -155,4 +165,5 @@ async def bring_up(dut, cfg: IbexCocotbConfig, bin_path, load_addr: int) -> Env:
     for component in (mem, irq, monitor, scoreboard):
         cocotb.start_soon(component.run())
 
-    return Env(mem=mem, irq=irq, monitor=monitor, scoreboard=scoreboard)
+    return Env(mem=mem, irq=irq, monitor=monitor, scoreboard=scoreboard,
+               coverage=coverage)

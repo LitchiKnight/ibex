@@ -33,6 +33,10 @@ class IbexCocotbConfig:
     spurious_response: bool = False
     irq_enable: bool = False
     irq_nmi_enable: bool = False
+    # Functional coverage model (py/coverage.py): sampled through the
+    # monitor and memory agent callbacks, reported by test_lib at the end
+    # of the run. Off only saves the per-item Python calls.
+    coverage_enable: bool = True
     # Poisoned addresses for the memory agent: accesses to them always
     # receive an error response (unmapped in the co-simulator's memory, so
     # Spike faults on them the same way the DUT does).
