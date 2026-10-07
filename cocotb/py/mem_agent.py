@@ -213,7 +213,9 @@ class IbexMemAgent:
         self.error_count = 0
         # Coroutine callback invoked with a DsideAccess once its response
         # has been driven; the scoreboard uses it to notify the
-        # co-simulator.
+        # co-simulator. Both observers are guarded the same way: a raising
+        # callback becomes the sticky agent error (see _notify /
+        # _notify_async), never a silent stop.
         self.on_access = on_access
         # Observer called with a BusEvent for every served transaction once
         # its response has been driven; the coverage model uses it.
@@ -304,17 +306,48 @@ class IbexMemAgent:
 
     def inject_error(self):
         """Injects an error response into the very next dside transaction
-        (mirrors the UVM ``inject_error()`` / ``error_synch`` semantics).
+        (mirrors the UVM ``inject_error()`` / ``error_synch`` semantics;
+        instruction fetches never consume it, see ``_take_error_for``).
         Available to tests that want a transient error; the dedicated error
         test uses the permanent ``error_addrs`` set instead."""
         self._inject_error = True
 
-    def _take_error_for(self, addr: int) -> bool:
-        """Consume the pending one-shot error injection for addr. Accesses
-        to the handshake addresses never see an injected error."""
+    # -- observer notification -------------------------------------------------
+
+    def _notify(self, callback, *args):
+        """Invoke a synchronous observer (on_bus_event). A raising
+        observer becomes the sticky agent error: the transaction has
+        already been served, so a plain timeout would hide the real
+        cause."""
+        if callback is None:
+            return
+        try:
+            callback(*args)
+        except Exception as exc:
+            self.error = exc
+            logger.error("mem agent: observer callback failed: %s", exc)
+
+    async def _notify_async(self, callback, *args):
+        """Same rule for the coroutine observer (on_access); the serving
+        loop stops after the failure, wait_for_result raises it."""
+        if callback is None:
+            return
+        try:
+            await callback(*args)
+        except Exception as exc:
+            self.error = exc
+            logger.error("mem agent: dside notification failed: %s", exc)
+
+    def _take_error_for(self, addr: int, is_ifetch: bool = False) -> bool:
+        """Consume the pending one-shot error injection for addr. The
+        permanent ``error_addrs`` set applies to both ports; the one-shot
+        ``inject_error()`` applies to data accesses only, because a fetch
+        consumes it almost immediately and would divert it from its
+        intended target. Accesses to the handshake addresses never see an
+        injected error."""
         if addr in self._no_error_addrs:
             return False
-        if self._inject_error:
+        if self._inject_error and not is_ifetch:
             self._inject_error = False
             return True
         return addr in self.cfg.error_addrs
@@ -324,8 +357,12 @@ class IbexMemAgent:
     def _record_iside_error(self, addr: int):
         """Remember that the instruction port just answered a fetch at
         ``addr`` with an error, for the scoreboard to forward to the
-        co-simulator before the trap's step (the UVM ifetch queue)."""
-        self._pending_iside_error = addr
+        co-simulator before the trap's step (the UVM ifetch queue). The
+        address is aligned because that is the co-simulator's contract.
+        A single slot: if the faulted fetch is flushed before it reaches
+        RVFI, the stale address may be dropped by a later unrelated item
+        (the scoreboard matches it against the retiring pc)."""
+        self._pending_iside_error = addr & ~0x3
 
     def consume_iside_error(self) -> int | None:
         """Take and clear the pending instruction-side error address, or
@@ -393,7 +430,7 @@ class IbexMemAgent:
             if not int(self.dut.instr_req_o.value):
                 continue
             request_addr = int(self.dut.instr_addr_o.value)
-            error = self._take_error_for(request_addr)
+            error = self._take_error_for(request_addr, is_ifetch=True)
             response_data = self.read_word(request_addr)
             logger.debug("instr req cycle %d addr 0x%08x -> 0x%08x err=%d",
                          cocotb.utils.get_sim_time(unit="ns") // 10,
@@ -409,10 +446,9 @@ class IbexMemAgent:
             if error:
                 self.error_count += 1
                 self._record_iside_error(request_addr)
-            if self.on_bus_event is not None:
-                self.on_bus_event(BusEvent(
-                    is_instr=True, addr=request_addr, error=bool(error),
-                    added_delay=gnt_delay + valid_delay))
+            self._notify(self.on_bus_event, BusEvent(
+                is_instr=True, addr=request_addr, error=bool(error),
+                added_delay=gnt_delay + valid_delay))
 
     async def _serve_data_port(self):
         """Serve data requests and spurious responses. This loop is the
@@ -521,22 +557,15 @@ class IbexMemAgent:
             # is idle. A failing notification (e.g. a wedged command
             # interface) is a sticky agent error: wait_for_result raises it
             # instead of letting the run limp on and time out.
-            try:
-                if self.on_access is not None:
-                    await self.on_access(access)
-            except Exception as exc:
-                self.error = exc
-                logger.error("mem agent: dside notification failed: %s", exc)
-                return
+            await self._notify_async(self.on_access, access)
 
-            if self.on_bus_event is not None:
-                self.on_bus_event(BusEvent(
-                    is_instr=False, addr=request_addr, store=is_store,
-                    error=bool(error), misaligned_first=bool(mis_first),
-                    misaligned_second=bool(mis_second),
-                    misaligned_first_saw_error=bool(mis_first_saw_err),
-                    m_mode=bool(m_mode),
-                    added_delay=gnt_delay + valid_delay))
+            self._notify(self.on_bus_event, BusEvent(
+                is_instr=False, addr=request_addr, store=is_store,
+                error=bool(error), misaligned_first=bool(mis_first),
+                misaligned_second=bool(mis_second),
+                misaligned_first_saw_error=bool(mis_first_saw_err),
+                m_mode=bool(m_mode),
+                added_delay=gnt_delay + valid_delay))
 
     async def run(self):
         # The loops run forever; gather reports a failure in any of them by

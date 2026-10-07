@@ -2,15 +2,18 @@
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Command-interface layout: the single definition of the opcode numbers
-and the packed-argument bit positions shared by the Python side and the
-tb (``tb/ibex_cocotb_tb.sv``).
+"""Command-interface layout: the single definition of the opcode numbers,
+the packed-argument bit positions and their fingerprint order, shared by
+the Python side and the tb (``tb/ibex_cocotb_tb.sv``).
 
 The Python side imports these numbers directly; the tb gets them from
 ``gen/out/cmd_defs.svh``, which ``gen/cmd_defs.py`` renders from this
-table at build time. Both sides therefore always agree by construction;
-the CMD_INIT layout fingerprint remains as a runtime sanity check on top
-(see ``py/cosim.py``).
+table at build time (the fingerprint order included, so the tb walks a
+generated array instead of hand-writing the sequence). The CMD_INIT
+layout fingerprint remains as a runtime sanity check on top (see
+``py/cosim.py``). The tb's command case is the one remaining hand-written
+consumer of the opcodes: its ``unique case`` plus the default ``$error``
+fail any opcode removed or renamed here.
 """
 
 # Command opcodes.

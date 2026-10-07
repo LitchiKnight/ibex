@@ -24,7 +24,7 @@
 #
 # Result handshake, same as the vendored tests: a write of 1 to the
 # signature address (0x8ffffff8) on pass, an odd write to the tohost
-# section (0x80001000) on fail (see mem_agent.classify_test_result).
+# section (0x80001000) on fail (see mem_agent.TestHandshake.classify).
 
 #include "common.inc"
 

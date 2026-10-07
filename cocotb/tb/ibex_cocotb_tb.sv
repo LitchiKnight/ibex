@@ -203,27 +203,19 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
 `endif
 
   // FNV-1a (32-bit) over the command opcodes and the packed-argument bit
-  // positions. Both sides derive their numbers from the single layout
-  // definition (py/cmd_defs.py, rendered into the cmd_defs.svh include
-  // above), so this fingerprint is a runtime sanity check rather than a
-  // drift detector; CMD_INIT returns it so the Python side verifies the
-  // two copies agree. The result is forced odd so it can never collide
-  // with the 0 init-failure return value.
+  // positions, in the order rendered by the generator. Both the numbers
+  // and this order come from the single layout definition
+  // (py/cmd_defs.py, rendered into the cmd_defs.svh include above), so
+  // the fingerprint is a runtime sanity check rather than a drift
+  // detector; CMD_INIT returns it so the Python side verifies the two
+  // copies agree. The result is forced odd so it can never collide with
+  // the 0 init-failure return value.
+  localparam int unsigned CMD_LAYOUT_VALUES [`CMD_LAYOUT_VALUES_LEN] =
+      `CMD_LAYOUT_VALUES;
   function automatic int unsigned layout_fingerprint();
     int unsigned h = 32'h811c0001;
-    int unsigned values[23] = '{
-      32'(`CMD_INIT), 32'(`CMD_STEP), 32'(`CMD_GET_ERRORS),
-      32'(`CMD_GET_INSN_CNT), 32'(`CMD_RELEASE), 32'(`CMD_NOTIFY_DSIDE),
-      32'(`CMD_SET_MIP), 32'(`CMD_GET_ERROR_STR),
-      32'(`CMD_SET_ISIDE_ERROR),
-      `STEP_RD_ADDR_LSB, `STEP_RF_WR_SUPPRESS_BIT, `STEP_TRAP_BIT,
-      `STEP_NMI_INT_BIT, `STEP_NMI_BIT, `STEP_DEBUG_REQ_BIT,
-      `DSIDE_STORE_BIT, `DSIDE_ERROR_BIT, `DSIDE_MIS_FIRST_BIT,
-      `DSIDE_MIS_SECOND_BIT, `DSIDE_MIS_FIRST_ERR_BIT, `DSIDE_M_MODE_BIT,
-      `SETMIP_NMI_BIT, `SETMIP_NMI_INT_BIT
-    };
-    for (int i = 0; i < $size(values); i++) begin
-      h = (h ^ values[i]) * 32'h01000193;
+    for (int i = 0; i < $size(CMD_LAYOUT_VALUES); i++) begin
+      h = (h ^ CMD_LAYOUT_VALUES[i]) * 32'h01000193;
     end
     return h | 32'h1;
   endfunction

@@ -40,7 +40,7 @@
 #
 # The result uses the same handshake as the vendored tests: a write of 1
 # to the signature address (0x8ffffff8) on pass, an odd write to the
-# tohost section (0x80001000) on fail (see mem_agent.classify_test_result).
+# tohost section (0x80001000) on fail (see mem_agent.TestHandshake.classify).
 
 #include "common.inc"
 
@@ -148,8 +148,9 @@ recheck_loop:
   # No handler entry may have happened: with mie at its reset value no
   # maskable interrupt can be taken, so the handler can only have been
   # entered by a bug (an unexpected trap takes the handler_fail path
-  # instead). The WritebackStage=1 variant flips this check to a minimum
-  # entry count (see the NMI_EXPECT_MIN define above).
+  # instead). A WritebackStage=1 variant must change this check to a
+  # minimum entry count: unlike NMI_EXPECT_MIN there is no switch for it,
+  # so the variant edits this file.
   la s3, irq_count
   lw s3, 0(s3)
   li s4, 0

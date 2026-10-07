@@ -23,7 +23,6 @@ from cocotb.triggers import RisingEdge, Timer
 
 from cosim import Cosim
 from cosim_channel import CosimChannel
-from coverage import IbexCoverage
 from env import IbexCocotbConfig
 from irq_agent import IbexIrqAgent, IrqAgentConfig
 from mem_agent import IbexMemAgent, MemAgentConfig, TestHandshake
@@ -145,10 +144,13 @@ async def bring_up(dut, cfg: IbexCocotbConfig, bin_path, load_addr: int) -> Env:
     channel = CosimChannel(dut)
     cosim = Cosim(channel)
     # The coverage model observes the monitor and the memory agent through
-    # their callbacks; it has no effect on the comparison flow.
-    coverage = (IbexCoverage()
-                if _bool_plusarg("ibex_cocotb_cov", cfg.coverage_enable)
-                else None)
+    # their callbacks; it has no effect on the comparison flow. The import
+    # is lazy so a missing optional cocotb-coverage installation only
+    # fails the runs that ask for coverage.
+    coverage = None
+    if _bool_plusarg("ibex_cocotb_cov", cfg.coverage_enable):
+        from coverage import IbexCoverage
+        coverage = IbexCoverage()
     monitor = RVFIMonitor(dut, on_retire=coverage.on_retire if coverage
                           else None)
     handshake = TestHandshake(cfg.signature_addr, cfg.tohost_addr)

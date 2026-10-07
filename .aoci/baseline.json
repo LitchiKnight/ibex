@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-10-06T09:59:22Z",
-  "updated_at": "2026-10-07T09:47:04Z",
+  "updated_at": "2026-10-07T11:10:49Z",
   "files": {
     ".clang-format": {
       "role": "index",
@@ -142,9 +142,9 @@
     },
     "aoci.code.txt": {
       "role": "index",
-      "sha256": "e5b375602bea2f74bc024ac2eedb3811510f128ac42cbde2722bfbf5b1b09727",
-      "size": 121055,
-      "normalized_sha256": "e5b375602bea2f74bc024ac2eedb3811510f128ac42cbde2722bfbf5b1b09727"
+      "sha256": "b7a825bc98ec6ebf65e43817bcccfffb6da820586dc7609d17d941603a680718",
+      "size": 121316,
+      "normalized_sha256": "b7a825bc98ec6ebf65e43817bcccfffb6da820586dc7609d17d941603a680718"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -202,9 +202,9 @@
     },
     "cocotb/Makefile": {
       "role": "index",
-      "sha256": "c86793e7f84b483059629b61c3e5ec90827e006ab9a76b454dbdbbed41836ccf",
-      "size": 9530,
-      "normalized_sha256": "c86793e7f84b483059629b61c3e5ec90827e006ab9a76b454dbdbbed41836ccf"
+      "sha256": "a1e8d6bfaa4ae2734eae408c1f96363785131107027db4c3caacc877e5e37513",
+      "size": 9516,
+      "normalized_sha256": "a1e8d6bfaa4ae2734eae408c1f96363785131107027db4c3caacc877e5e37513"
     },
     "cocotb/PARITY.md": {
       "role": "index",
@@ -214,9 +214,9 @@
     },
     "cocotb/PLAN.md": {
       "role": "index",
-      "sha256": "f8b8326761b53e70c0612219bc83824c2b89ff2be0e55627009aece1b6191344",
-      "size": 27689,
-      "normalized_sha256": "f8b8326761b53e70c0612219bc83824c2b89ff2be0e55627009aece1b6191344"
+      "sha256": "f996a0a38ad83d2d188f88ce5e9e673bcbf6db415f58a009fe9f0c825d1c3564",
+      "size": 29576,
+      "normalized_sha256": "f996a0a38ad83d2d188f88ce5e9e673bcbf6db415f58a009fe9f0c825d1c3564"
     },
     "cocotb/dpi/ibex_cocotb_dpi.cc": {
       "role": "index",
@@ -226,9 +226,9 @@
     },
     "cocotb/gen/cmd_defs.py": {
       "role": "index",
-      "sha256": "5142e650ccc0e5a8dc7ed5629df61e68dd9cfcc80c68c7360b7dd67088ea7ce0",
-      "size": 1707,
-      "normalized_sha256": "5142e650ccc0e5a8dc7ed5629df61e68dd9cfcc80c68c7360b7dd67088ea7ce0"
+      "sha256": "e3edb8810132c1db29040fc85ebb74f26db57659a660ed078579ba8d3e2c1d00",
+      "size": 2224,
+      "normalized_sha256": "e3edb8810132c1db29040fc85ebb74f26db57659a660ed078579ba8d3e2c1d00"
     },
     "cocotb/gen/instr_gen.py": {
       "role": "index",
@@ -244,9 +244,9 @@
     },
     "cocotb/py/cmd_defs.py": {
       "role": "index",
-      "sha256": "05745ce216ebe006d1c380b086be5dc090d2c5fced02599f8e8dcfddaad581ed",
-      "size": 1817,
-      "normalized_sha256": "05745ce216ebe006d1c380b086be5dc090d2c5fced02599f8e8dcfddaad581ed"
+      "sha256": "52701c65b769386e77c9bc133839965a334779fbffb6df6a2462659226fe277b",
+      "size": 2067,
+      "normalized_sha256": "52701c65b769386e77c9bc133839965a334779fbffb6df6a2462659226fe277b"
     },
     "cocotb/py/cosim.py": {
       "role": "index",
@@ -262,9 +262,9 @@
     },
     "cocotb/py/coverage.py": {
       "role": "index",
-      "sha256": "fbe95661cf28dc2d9f8e23857e336215ad2df42731056114b2bb77dce093eaac",
-      "size": 24541,
-      "normalized_sha256": "fbe95661cf28dc2d9f8e23857e336215ad2df42731056114b2bb77dce093eaac"
+      "sha256": "a3cadc3c70e9a0688c59efd7dde79f32498f95196ba470617f746ef92a625af9",
+      "size": 25774,
+      "normalized_sha256": "a3cadc3c70e9a0688c59efd7dde79f32498f95196ba470617f746ef92a625af9"
     },
     "cocotb/py/env.py": {
       "role": "index",
@@ -280,39 +280,45 @@
     },
     "cocotb/py/mem_agent.py": {
       "role": "index",
-      "sha256": "65fb229c651b6832eaf224687a80073c2b103404994ea7790d9ea57f851ddc22",
-      "size": 24086,
-      "normalized_sha256": "65fb229c651b6832eaf224687a80073c2b103404994ea7790d9ea57f851ddc22"
+      "sha256": "3a329f1e111df84767b5e9b46a7824175e876b57d27a782053afd43ba5ee1f61",
+      "size": 25581,
+      "normalized_sha256": "3a329f1e111df84767b5e9b46a7824175e876b57d27a782053afd43ba5ee1f61"
     },
     "cocotb/py/rvfi_monitor.py": {
       "role": "index",
-      "sha256": "8da2f4f6726057fd1dcce69473aadb7450e56f22921e7b47a8047381ba042dd6",
-      "size": 7122,
-      "normalized_sha256": "8da2f4f6726057fd1dcce69473aadb7450e56f22921e7b47a8047381ba042dd6"
+      "sha256": "a2952c13ab331f1f54a09d4b67884dbfa7a11cb98607a6c5ab88d672f678339a",
+      "size": 7508,
+      "normalized_sha256": "a2952c13ab331f1f54a09d4b67884dbfa7a11cb98607a6c5ab88d672f678339a"
     },
     "cocotb/py/scoreboard.py": {
       "role": "index",
-      "sha256": "01348fcbfd3c701e7da8f192dc40f0233f529a3650f6eb059cf4aaa11389b31e",
-      "size": 9049,
-      "normalized_sha256": "01348fcbfd3c701e7da8f192dc40f0233f529a3650f6eb059cf4aaa11389b31e"
+      "sha256": "e7b76307f1a4ba26e23cdb4f51c47f880405ba3c488c8dcf49141d50cbf6a19d",
+      "size": 9777,
+      "normalized_sha256": "e7b76307f1a4ba26e23cdb4f51c47f880405ba3c488c8dcf49141d50cbf6a19d"
     },
     "cocotb/py/tb_env.py": {
       "role": "index",
-      "sha256": "ad83b2a7fb4237ebc1bcdcd4934c064060412ee1bcbf65976343203afea223c8",
-      "size": 6658,
-      "normalized_sha256": "ad83b2a7fb4237ebc1bcdcd4934c064060412ee1bcbf65976343203afea223c8"
+      "sha256": "6fa4fa1bdc661eda76c446847568991be0c503061ebc6b24a304fc429ca97d7f",
+      "size": 6776,
+      "normalized_sha256": "6fa4fa1bdc661eda76c446847568991be0c503061ebc6b24a304fc429ca97d7f"
     },
     "cocotb/py/test_lib.py": {
       "role": "observe",
-      "sha256": "b74121d66af7a80082290c3c9bc9db0cd756a8db9ff1b5d71fa8dac40e173abf",
-      "size": 5035,
-      "normalized_sha256": "b74121d66af7a80082290c3c9bc9db0cd756a8db9ff1b5d71fa8dac40e173abf"
+      "sha256": "405d68519c14f1950ad02526f11ec0bd07a80c862cd29cbc488a642033b717ae",
+      "size": 5511,
+      "normalized_sha256": "405d68519c14f1950ad02526f11ec0bd07a80c862cd29cbc488a642033b717ae"
+    },
+    "cocotb/requirements.txt": {
+      "role": "index",
+      "sha256": "6bdd7741c95f7040901563cf87cee31d5b699ca39fc75da50bbd82abd817e6f3",
+      "size": 382,
+      "normalized_sha256": "6bdd7741c95f7040901563cf87cee31d5b699ca39fc75da50bbd82abd817e6f3"
     },
     "cocotb/tb/ibex_cocotb_tb.sv": {
       "role": "index",
-      "sha256": "2a5e0de0b16615bece10c0cad449c4b86d379ee91058a9f1e18569d84258e4ee",
-      "size": 23326,
-      "normalized_sha256": "2a5e0de0b16615bece10c0cad449c4b86d379ee91058a9f1e18569d84258e4ee"
+      "sha256": "041279d40c96dad35745b328db5f8125b377ae00f4869dcd2659c9534b63f5a5",
+      "size": 22929,
+      "normalized_sha256": "041279d40c96dad35745b328db5f8125b377ae00f4869dcd2659c9534b63f5a5"
     },
     "cocotb/tests/sw/common.inc": {
       "role": "observe",
@@ -322,21 +328,21 @@
     },
     "cocotb/tests/sw/error_test.S": {
       "role": "observe",
-      "sha256": "0bfddf5844b4b7c171de899a8961079f8520412cfb6338eac3e5ebc7cecde8cb",
-      "size": 3057,
-      "normalized_sha256": "0bfddf5844b4b7c171de899a8961079f8520412cfb6338eac3e5ebc7cecde8cb"
+      "sha256": "1360baf66f0093f571a358c234abd31aee8acb77d6a27d100ed4abdb4b66c8de",
+      "size": 3059,
+      "normalized_sha256": "1360baf66f0093f571a358c234abd31aee8acb77d6a27d100ed4abdb4b66c8de"
     },
     "cocotb/tests/sw/irq_test.S": {
       "role": "observe",
-      "sha256": "8500ba832e12029ff676d09f2285857c089d3976f679589c7a120e676c5733fa",
-      "size": 7222,
-      "normalized_sha256": "8500ba832e12029ff676d09f2285857c089d3976f679589c7a120e676c5733fa"
+      "sha256": "f4db74d928cbe272a4d6583c97f23c67ffc5213bdbcaaed7a49044be968e4442",
+      "size": 7275,
+      "normalized_sha256": "f4db74d928cbe272a4d6583c97f23c67ffc5213bdbcaaed7a49044be968e4442"
     },
     "cocotb/tests/sw/iside_error_test.S": {
       "role": "observe",
-      "sha256": "152aab54d5cd9a83b57d963b9189638bbedc3b37590a674d47fec545b9efc22d",
-      "size": 2908,
-      "normalized_sha256": "152aab54d5cd9a83b57d963b9189638bbedc3b37590a674d47fec545b9efc22d"
+      "sha256": "ece7cf969b4850344fecad3b604874488c99095b9475ac4820f3685610692508",
+      "size": 2910,
+      "normalized_sha256": "ece7cf969b4850344fecad3b604874488c99095b9475ac4820f3685610692508"
     },
     "cocotb/tests/sw/legacy_csr_compat.h": {
       "role": "observe",

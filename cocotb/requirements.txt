@@ -1,0 +1,8 @@
+# Python dependencies of the cocotb verification environment (pip).
+#
+# cocotb-coverage is pinned exactly: py/coverage.py resets its hit
+# counters between tests through private fields (the 2.0 API has no reset
+# method), and that reset is asserted at report time so a major upgrade
+# fails loudly instead of silently changing coverage semantics.
+cocotb==2.1.0
+cocotb-coverage==2.0

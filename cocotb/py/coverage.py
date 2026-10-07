@@ -290,6 +290,15 @@ def csr_writes(insn: int) -> bool:
 
 INTERRUPT_LINES = ("software", "timer", "external", "fast", "nmi", "none")
 
+# RVFI mode values to their coverage names; the single representation of
+# the privilege level in this model (the ID-side and LSU-side
+# coverpoints both use these names).
+_MODE_NAMES = {0: "user", 3: "machine"}
+
+
+def priv_mode_name(mode: int) -> str:
+    return _MODE_NAMES.get(mode, "other")
+
 
 def interrupt_line(pre_mip: int, post_mip: int, nmi: int, nmi_int: int):
     """Name of the interrupt line taken by this item, or None."""
@@ -396,7 +405,8 @@ class IbexCoverage:
         pass
 
     @CoverPoint("cov.cp_priv_mode_id", xf=lambda mode: mode,
-                bins=[0, 3], bins_labels=["user", "machine"])
+                bins=["user", "machine"],
+                bins_labels=["user", "machine"])
     def _sample_priv_mode_id(self, mode):
         pass
 
@@ -511,8 +521,8 @@ class IbexCoverage:
         # rvfi_insn alone presents compressed instructions as the 16-bit
         # encoding zero-extended, which the classifier cannot decode.
         insn = item.expanded_insn if item.expanded_valid else item.insn
-        mode = item.mode
-        category = retire_category(insn, mode, item.trap,
+        mode = priv_mode_name(item.mode)
+        category = retire_category(insn, item.mode, item.trap,
                                    item.debug_mode)
         self._sample_instr_category(category)
         self._sample_priv_mode_id(mode)
@@ -576,9 +586,27 @@ class IbexCoverage:
         logger.info("coverage database written to %s", xml_path)
         for name, reason in SKIPPED.items():
             logger.info("coverage skipped %s: %s", name, reason)
+        self._reset_hits()
+
+    def _reset_hits(self):
+        """Zero the hit counters between tests.
+
+        This must reset the cocotb-coverage internals in place rather
+        than deleting and re-registering the coverpoints: the library
+        (2.0) has no reset API, CoverPoint.__new__ caches objects by
+        name, and _update_size only ever grows the parents, so
+        re-registration would leave the decorator closures bound to dead
+        objects with permanently inflated sizes. The private fields are
+        asserted first so a library upgrade fails loudly instead of
+        accumulating coverage under different internals.
+        """
         for name in list(coverage_db):
             obj = coverage_db[name]
             if type(obj) in (CoverPoint, CoverCross):
+                assert hasattr(obj, "_hits"), (
+                    "cocotb-coverage internals changed ({}: no _hits); "
+                    "the reset relies on them, pin the library "
+                    "version".format(name))
                 obj._hits = OrderedDict.fromkeys(obj._hits.keys(), 0)
             obj._coverage = 0
             obj._new_hits = []

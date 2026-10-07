@@ -145,7 +145,7 @@ CMD_DEFS_SVH := $(COCOTB_DIR)/gen/out/cmd_defs.svh
 
 $(CMD_DEFS_SVH): $(COCOTB_DIR)/py/cmd_defs.py $(COCOTB_DIR)/gen/cmd_defs.py
 	mkdir -p $(dir $@)
-	cd $(COCOTB_DIR) && PYTHONPATH=py python3 gen/cmd_defs.py $@
+	cd $(COCOTB_DIR) && python3 gen/cmd_defs.py $@
 
 CUSTOM_COMPILE_DEPS = $(CMD_DEFS_SVH)
 

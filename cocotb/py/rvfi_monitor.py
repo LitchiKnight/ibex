@@ -33,7 +33,15 @@ def decode_crash_dump(dump: int):
 @dataclass
 class RvfiItem:
     """Fields needed by the scoreboard for one retired instruction or one
-    IRQ-only event."""
+    IRQ-only event.
+
+    This is the complete RVFI sampling snapshot: both consumers see the
+    same item, so they can never disagree on what was retired. The fields
+    ``expanded_insn``/``expanded_valid``/``mode``/``debug_mode`` are used
+    by the coverage model only, never by the scoreboard's comparison;
+    everything else feeds the comparison (and some of it the coverage
+    model as well).
+    """
 
     order: int
     pc: int

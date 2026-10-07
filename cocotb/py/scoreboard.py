@@ -47,12 +47,14 @@ class Scoreboard:
     retired count has been processed.
     """
 
-    def __init__(self, cosim: Cosim, monitor, iside_error_source=None):
+    def __init__(self, cosim: Cosim, monitor, iside_error_source):
         self.cosim = cosim
         self.monitor = monitor
         # The memory agent, which remembers the address of any instruction
         # fetch it answered with an error; the scoreboard forwards it to
-        # the co-simulator before the trap's step.
+        # the co-simulator before the trap's step. Required: omitting it
+        # would silently drop the fetch-error comparison, so no default is
+        # offered.
         self._iside_error_source = iside_error_source
         self.processed = 0
         self.error = None
@@ -107,10 +109,20 @@ class Scoreboard:
         # An instruction-fetch error answered by the memory agent must
         # reach the co-simulator before the trap's step (the UVM
         # scoreboard's riscv_cosim_set_iside_error from its ifetch queue).
-        if item.trap and self._iside_error_source is not None:
-            iside_addr = self._iside_error_source.consume_iside_error()
-            if iside_addr is not None:
+        # Every retired item consumes the pending slot, mirroring the UVM
+        # queue's per-item order match: only a trap item retiring at the
+        # faulting address forwards the error, anything else means the
+        # faulted fetch was flushed or never reached RVFI and the stale
+        # expectation is dropped (injecting it would fail a later step
+        # with a misattributed mismatch).
+        iside_addr = self._iside_error_source.consume_iside_error()
+        if iside_addr is not None:
+            if item.trap and (item.pc & ~0x3) == iside_addr:
                 await self.cosim.set_iside_error(iside_addr)
+            else:
+                logger.error("dropped iside error at 0x%08x: retiring item "
+                             "pc=0x%08x trap=%d does not match it",
+                             iside_addr, item.pc, item.trap)
 
         ok = await self.cosim.step(
             pc=item.pc,
