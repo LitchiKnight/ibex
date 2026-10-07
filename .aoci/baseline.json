@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-10-06T09:59:22Z",
-  "updated_at": "2026-10-07T11:10:49Z",
+  "updated_at": "2026-10-07T13:35:09Z",
   "files": {
     ".clang-format": {
       "role": "index",
@@ -75,6 +75,36 @@
       "size": 425,
       "normalized_sha256": "590b970a4b8462160524fefe9f869624feded508f0f87bc7d942627c7e316ae9"
     },
+    ".scratch/cocotb-regression-covmerge/README.md": {
+      "role": "index",
+      "sha256": "423b3d9206e4a83a4686872a2cba4621f37c2db5bd3348b72ba289ce82f509a5",
+      "size": 697,
+      "normalized_sha256": "423b3d9206e4a83a4686872a2cba4621f37c2db5bd3348b72ba289ce82f509a5"
+    },
+    ".scratch/cocotb-regression-covmerge/map.md": {
+      "role": "index",
+      "sha256": "00e53e76c124e9e185e24b5dd781ce4144f01017b3a15962a4e4be8b7a326dec",
+      "size": 2957,
+      "normalized_sha256": "00e53e76c124e9e185e24b5dd781ce4144f01017b3a15962a4e4be8b7a326dec"
+    },
+    ".scratch/cocotb-regression-covmerge/t01-regression-runner.md": {
+      "role": "index",
+      "sha256": "1b90f901b9dfede28476f882ba2ddb65d2f80e6f506ccd3602679b2c4fe458fa",
+      "size": 4003,
+      "normalized_sha256": "1b90f901b9dfede28476f882ba2ddb65d2f80e6f506ccd3602679b2c4fe458fa"
+    },
+    ".scratch/cocotb-regression-covmerge/t02-coverage-merge.md": {
+      "role": "index",
+      "sha256": "33b964261f52e1206e96bf60da3ce358e3e902c489ba91179e122e69261f20ba",
+      "size": 3392,
+      "normalized_sha256": "33b964261f52e1206e96bf60da3ce358e3e902c489ba91179e122e69261f20ba"
+    },
+    ".scratch/cocotb-regression-covmerge/t03-integration-acceptance.md": {
+      "role": "index",
+      "sha256": "90de992656e3d156911ac5c54e1a490926536dd066c378dbf8f4a56b8c64b6cb",
+      "size": 3055,
+      "normalized_sha256": "90de992656e3d156911ac5c54e1a490926536dd066c378dbf8f4a56b8c64b6cb"
+    },
     ".svlint.toml": {
       "role": "index",
       "sha256": "1d43b3e171d8e0e9bcff639310c2c38a6f3a7c615531155ac91fdf4c3a5cb913",
@@ -142,9 +172,9 @@
     },
     "aoci.code.txt": {
       "role": "index",
-      "sha256": "b7a825bc98ec6ebf65e43817bcccfffb6da820586dc7609d17d941603a680718",
-      "size": 121316,
-      "normalized_sha256": "b7a825bc98ec6ebf65e43817bcccfffb6da820586dc7609d17d941603a680718"
+      "sha256": "29314ce0af8205d1b309f06068aae7ffb7db48ea93682f3c9cfd7b0c2b6813a7",
+      "size": 124839,
+      "normalized_sha256": "29314ce0af8205d1b309f06068aae7ffb7db48ea93682f3c9cfd7b0c2b6813a7"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -196,15 +226,15 @@
     },
     "cocotb/.gitignore": {
       "role": "index",
-      "sha256": "d19e20907c3fb0b4eef848122ca98c8802e2d994317cbcf53849652d21e2288c",
-      "size": 132,
-      "normalized_sha256": "d19e20907c3fb0b4eef848122ca98c8802e2d994317cbcf53849652d21e2288c"
+      "sha256": "ae93968b9cfd2756dd5e6d64bea47c4b2d4da50ba115f0d7e3211f0076bc38dc",
+      "size": 144,
+      "normalized_sha256": "ae93968b9cfd2756dd5e6d64bea47c4b2d4da50ba115f0d7e3211f0076bc38dc"
     },
     "cocotb/Makefile": {
       "role": "index",
-      "sha256": "a1e8d6bfaa4ae2734eae408c1f96363785131107027db4c3caacc877e5e37513",
-      "size": 9516,
-      "normalized_sha256": "a1e8d6bfaa4ae2734eae408c1f96363785131107027db4c3caacc877e5e37513"
+      "sha256": "b0a4863525f530442f3a5c4c3733e31d6fb41edd80687432ccaec42615ef921d",
+      "size": 13428,
+      "normalized_sha256": "b0a4863525f530442f3a5c4c3733e31d6fb41edd80687432ccaec42615ef921d"
     },
     "cocotb/PARITY.md": {
       "role": "index",
@@ -214,9 +244,9 @@
     },
     "cocotb/PLAN.md": {
       "role": "index",
-      "sha256": "f996a0a38ad83d2d188f88ce5e9e673bcbf6db415f58a009fe9f0c825d1c3564",
-      "size": 29576,
-      "normalized_sha256": "f996a0a38ad83d2d188f88ce5e9e673bcbf6db415f58a009fe9f0c825d1c3564"
+      "sha256": "139643caa5b17d507af3a13c3de824f65d6bbdb5fdce584ba927d4fcfc6d1ee2",
+      "size": 33744,
+      "normalized_sha256": "139643caa5b17d507af3a13c3de824f65d6bbdb5fdce584ba927d4fcfc6d1ee2"
     },
     "cocotb/dpi/ibex_cocotb_dpi.cc": {
       "role": "index",
@@ -242,6 +272,12 @@
       "size": 4526,
       "normalized_sha256": "32d37dfd2ac86f074e97d82acd928909e5f40057d7b77be76ca756a0ee642c28"
     },
+    "cocotb/merge_cov.py": {
+      "role": "index",
+      "sha256": "e70359f2b049340833d6d37ec3ecd281b62ddd327f8f0f02b9b09c05669a4f6c",
+      "size": 5303,
+      "normalized_sha256": "e70359f2b049340833d6d37ec3ecd281b62ddd327f8f0f02b9b09c05669a4f6c"
+    },
     "cocotb/py/cmd_defs.py": {
       "role": "index",
       "sha256": "52701c65b769386e77c9bc133839965a334779fbffb6df6a2462659226fe277b",
@@ -259,6 +295,12 @@
       "sha256": "e524e417ac4be7cda93b7badb7189596beb66b941db1c060c50fc76928bcbd93",
       "size": 3734,
       "normalized_sha256": "e524e417ac4be7cda93b7badb7189596beb66b941db1c060c50fc76928bcbd93"
+    },
+    "cocotb/py/cov_paths.py": {
+      "role": "index",
+      "sha256": "2a5b35bbe6a9992f7f7596972b1c765c1b045afab39596ccb668553f0cf92162",
+      "size": 695,
+      "normalized_sha256": "2a5b35bbe6a9992f7f7596972b1c765c1b045afab39596ccb668553f0cf92162"
     },
     "cocotb/py/coverage.py": {
       "role": "index",
@@ -304,9 +346,9 @@
     },
     "cocotb/py/test_lib.py": {
       "role": "observe",
-      "sha256": "405d68519c14f1950ad02526f11ec0bd07a80c862cd29cbc488a642033b717ae",
-      "size": 5511,
-      "normalized_sha256": "405d68519c14f1950ad02526f11ec0bd07a80c862cd29cbc488a642033b717ae"
+      "sha256": "653f1fa895f3ad0f57b64d483df21254cde935e05a5c4ac3d14de96f5930137b",
+      "size": 5570,
+      "normalized_sha256": "653f1fa895f3ad0f57b64d483df21254cde935e05a5c4ac3d14de96f5930137b"
     },
     "cocotb/requirements.txt": {
       "role": "index",
@@ -314,11 +356,23 @@
       "size": 382,
       "normalized_sha256": "6bdd7741c95f7040901563cf87cee31d5b699ca39fc75da50bbd82abd817e6f3"
     },
+    "cocotb/run.py": {
+      "role": "index",
+      "sha256": "eff11a077df72366fbfbcba1bef651abadd4d44956bc9b39e2ea47dd723781cb",
+      "size": 12268,
+      "normalized_sha256": "eff11a077df72366fbfbcba1bef651abadd4d44956bc9b39e2ea47dd723781cb"
+    },
     "cocotb/tb/ibex_cocotb_tb.sv": {
       "role": "index",
       "sha256": "041279d40c96dad35745b328db5f8125b377ae00f4869dcd2659c9534b63f5a5",
       "size": 22929,
       "normalized_sha256": "041279d40c96dad35745b328db5f8125b377ae00f4869dcd2659c9534b63f5a5"
+    },
+    "cocotb/testlist.yaml": {
+      "role": "index",
+      "sha256": "dbaa2ce3dac642d29408a499b386a5bfcb53e2e2c037c23e820361db9159db7e",
+      "size": 641,
+      "normalized_sha256": "dbaa2ce3dac642d29408a499b386a5bfcb53e2e2c037c23e820361db9159db7e"
     },
     "cocotb/tests/sw/common.inc": {
       "role": "observe",

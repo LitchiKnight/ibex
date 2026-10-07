@@ -18,6 +18,7 @@ from pathlib import Path
 
 import cocotb
 
+from cov_paths import coverage_xml_path
 from env import IbexCocotbConfig
 from tb_env import bring_up
 
@@ -102,8 +103,8 @@ async def run_ibex_test(dut, cfg=None):
     # the verification conclusion: coverage is a by-product, not the
     # result.
     if env.coverage is not None:
-        xml_path = (Path(bin_path).parent
-                    / ("coverage_" + Path(bin_path).stem + ".xml"))
+        suite, test = Path(bin_path).stem.split("_", 1)
+        xml_path = coverage_xml_path(Path(bin_path).parent, suite, test)
         try:
             xml_path.parent.mkdir(parents=True, exist_ok=True)
             env.coverage.report(xml_path)

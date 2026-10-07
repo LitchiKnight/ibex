@@ -147,7 +147,7 @@ $(CMD_DEFS_SVH): $(COCOTB_DIR)/py/cmd_defs.py $(COCOTB_DIR)/gen/cmd_defs.py
 	mkdir -p $(dir $@)
 	cd $(COCOTB_DIR) && python3 gen/cmd_defs.py $@
 
-CUSTOM_COMPILE_DEPS = $(CMD_DEFS_SVH)
+CUSTOM_COMPILE_DEPS = $(CMD_DEFS_SVH) $(COMPILE_STAMP)
 
 # Verilator options for the elaboration step. The lint waiver must come
 # before any other Verilog file; --timing is required because the design
@@ -160,6 +160,27 @@ VERILATOR_OPTS = \
   --timing \
   --unroll-count 72 \
   -Wno-fatal
+
+# Waveform dumping: `make sim ... WAVES=1` elaborates with Verilator's FST
+# tracer and writes ibex_cocotb_tb.fst next to the Makefile (open it with
+# GTKWave or Surfer). Default off; the regression never traces. Toggling
+# WAVES changes the compile inputs, so the compile-args stamp below
+# re-elaborates automatically.
+WAVES ?= 0
+# Verilator's FST writer includes <lz4.h>; brew keeps it in the keg path.
+# Overridable for non-brew setups. Appended to the exported CPPFLAGS
+# below (the export line reassigns with `=`, so a `CPPFLAGS +=` here
+# would be overwritten).
+LZ4_PREFIX ?= $(shell brew --prefix lz4 2>/dev/null || echo /opt/homebrew/opt/lz4)
+TRACE_INC :=
+TRACE_LDFLAGS :=
+ifeq ($(WAVES),1)
+  VERILATOR_OPTS += --trace-fst --trace-structs
+  TRACE_INC := -I$(LZ4_PREFIX)/include
+  TRACE_LDFLAGS := -L$(LZ4_PREFIX)/lib -Wl,-rpath,$(LZ4_PREFIX)/lib
+  # cocotb's verilator main only opens the dump when --trace is passed.
+  SIM_ARGS += --trace --trace-file ibex_cocotb_tb.fst
+endif
 
 # The unchanged dv/cosim DPI sources plus the cocotb helper.
 COSIM_SRCS = \
@@ -175,7 +196,7 @@ COMPILE_ARGS = \
   $(VERILATOR_OPTS) \
   -CFLAGS "-std=c++17" \
   $(COSIM_SRCS) \
-  -LDFLAGS "$(COSIM_LDFLAGS)"
+  -LDFLAGS "$(COSIM_LDFLAGS) $(TRACE_LDFLAGS)"
 
 # Runtime plusargs consumed by tb/ibex_cocotb_tb.sv (CMD_INIT) to load the
 # binary into the co-simulator, by the Python test for its own copy of the
@@ -187,7 +208,24 @@ COCOTB_PLUSARGS = +ibex_cocotb_bin=$(BIN) +ibex_cocotb_load_addr=$(IBEX_LOAD_ADD
 # C++ include paths for the DPI sources. Verilator's generated makefile uses
 # $(CPPFLAGS) from the environment (the -I entries cannot be passed through
 # -CFLAGS, where Verilator strips them).
-export CPPFLAGS = -I$(IBEX_ROOT)/dv/cosim -I$(IBEX_ROOT)/dv/uvm/core_ibex/common/ibex_cosim_agent -I$(SPIKE_PREFIX)/include -I$(SPIKE_PREFIX)/include/softfloat -I$(SPIKE_PREFIX)/include/fesvr -I$(SPIKE_PREFIX)/include/fdt
+export CPPFLAGS = -I$(IBEX_ROOT)/dv/cosim -I$(IBEX_ROOT)/dv/uvm/core_ibex/common/ibex_cosim_agent -I$(SPIKE_PREFIX)/include -I$(SPIKE_PREFIX)/include/softfloat -I$(SPIKE_PREFIX)/include/fesvr -I$(SPIKE_PREFIX)/include/fdt $(TRACE_INC)
+
+# Re-elaborate automatically when the compile inputs change (P1-4): the
+# stock Vtop.mk rule only fires on source changes, so editing
+# COMPILE_ARGS/CPPFLAGS used to silently keep the stale build and needed
+# a manual `rm sim_build/Vtop.mk`. This stamp hashes the compile inputs
+# and feeds CUSTOM_COMPILE_DEPS, so such edits now trigger a fresh
+# elaboration on the next make (the stamp only rewrites on a change, so
+# untouched builds never re-elaborate).
+COMPILE_STAMP := $(COCOTB_DIR)/sim_build/.compile_args.sha1
+
+.PHONY: FORCE
+FORCE:
+
+$(COMPILE_STAMP): FORCE
+	@mkdir -p $(dir $@)
+	@printf '%s\n' '$(COMPILE_ARGS) $(CPPFLAGS) $(VERILOG_SOURCES)' | shasum -a 256 | cut -d' ' -f1 > $@.tmp
+	@if cmp -s $@.tmp $@ 2>/dev/null; then rm -f $@.tmp; else mv $@.tmp $@; fi
 
 # Rebuild/rerun the simulation when the test binary changes.
 CUSTOM_SIM_DEPS = $(BIN)
@@ -208,5 +246,53 @@ $(OUT_DIR):
 .PHONY: build_test
 
 build_test: $(BIN)
+
+# --- Regression (run.py) ---
+# The curated list lives in testlist.yaml; run.py builds every test binary,
+# elaborates the tb once and runs the shared compiled sim binary for every
+# test in parallel (see run.py --help). REGRESSION_OPTS is passed through,
+# e.g. `make regression REGRESSION_OPTS="-j 8 --tests gen"`.
+#
+# Name collision (cocotb 2.1): the stock makefile flow runs one simulation
+# as `sim -> regression -> results.xml`, so a full multi-test recipe on the
+# name `regression` would be pulled into every `make sim`. The recipe below
+# therefore only exists when `regression` itself is the make goal
+# (MAKECMDGOALS is fixed before the makefiles are read); as a prerequisite
+# of `sim` the target stays recipe-less and `make sim` keeps its
+# single-test meaning. Known side effect: when results.xml is stale, `make
+# regression` first runs one default single sim (results.xml is a merged
+# prerequisite of this name).
+.PHONY: regression
+regression: $(CMD_DEFS_SVH)
+ifeq ($(MAKECMDGOALS),regression)
+	python3 run.py $(REGRESSION_OPTS)
+endif
+
+# Helper for run.py: the per-test runtime configuration resolved by the
+# TESTSUITE branches above, one KEY='value' per line (values are
+# single-quoted, so '=' or spaces inside a value cannot be misparsed;
+# run.py parses each line with shlex). The Makefile stays the single
+# source for these values; run.py never re-derives tool paths, testcase
+# names or plusargs itself.
+.PHONY: regress-vars
+regress-vars:
+	@echo "TESTCASE='$(TESTCASE)'"
+	@echo "BIN='$(BIN)'"
+	@echo "EXTRA_PLUSARGS='$(EXTRA_PLUSARGS)'"
+	@echo "LOAD_ADDR='$(IBEX_LOAD_ADDR)'"
+	@echo "MODULE='$(MODULE)'"
+	@echo "TOPLEVEL='$(TOPLEVEL)'"
+	@echo "TOPLEVEL_LANG='$(TOPLEVEL_LANG)'"
+	@echo "OUT_DIR='$(OUT_DIR)'"
+	@echo "SIM_BUILD='$(SIM_BUILD)'"
+	@echo "GPI_USERS='$(GPI_USERS)'"
+	@echo "PYGPI_PYTHON_BIN='$(PYGPI_PYTHON_BIN)'"
+
+# Merge the per-test coverage databases (merge_cov.py, see t02): the merged
+# database and the text report land in out/. This is also invoked
+# automatically at the end of every `make regression` (run.py).
+.PHONY: merge_cov
+merge_cov:
+	python3 merge_cov.py
 
 include $(shell python3 -m cocotb_tools.config --makefiles)/Makefile.sim

@@ -1,0 +1,34 @@
+# Explicit curated regression list for the cocotb environment (t01).
+# A test must be listed here to run in `make regression`; the corpus
+# matches the PARITY.md 29/29 evidence set (7 rv32ui + 14 rv32mi + 3 sw
+# + gen seeds). New tests are added to this file, never discovered by
+# scanning.
+rv32ui:
+  - addi
+  - and
+  - lw
+  - or
+  - sh
+  - slli
+  - sw
+rv32mi:
+  - breakpoint
+  - csr
+  - illegal
+  - lh-misaligned
+  - lw-misaligned
+  - ma_addr
+  - ma_fetch
+  - mcsr
+  - sbreak
+  - scall
+  - sh-misaligned
+  - shamt
+  - sw-misaligned
+  - zicntr
+sw:
+  - irq_test
+  - error_test
+  - iside_error_test
+gen:
+  seeds: 100       # run seeds 1..100

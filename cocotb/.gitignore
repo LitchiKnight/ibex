@@ -6,3 +6,5 @@ results.xml
 __pycache__/
 *.pyc
 spike_cosim.log
+*.fst
+*.vcd
