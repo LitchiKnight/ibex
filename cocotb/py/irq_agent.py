@@ -10,8 +10,10 @@ driven as levels for a randomised hold time. Each raise picks a random
 combination of lines with the same distribution as the UVM ``irq_seq_item``
 (``$countones`` of all lines equals ``num_of_interrupt``, softly one).
 
-The core only samples the lines when the pipeline empties, so holds are kept
-generous; the idle gap between raises is randomised the same way.
+The agent owns its lines: it drives them all low at construction, so no
+other component needs to know the line list. The core only samples the
+lines when the pipeline empties, so holds are kept generous; the idle gap
+between raises is randomised the same way.
 
 The agent is a passive stimulus source: whether a raised line actually traps
 depends on the program (``mstatus``.MIE, ``mie``). Most vendored riscv-tests
@@ -28,6 +30,26 @@ import cocotb
 from cocotb.triggers import RisingEdge
 
 logger = logging.getLogger("cocotb.irq_agent")
+
+
+@dataclass(frozen=True)
+class IrqLine:
+    """One interrupt input: the tb port name, plus the index for fast
+    lines."""
+
+    name: str
+    fast_index: int | None = None
+
+    @property
+    def is_nmi(self) -> bool:
+        return self.name == "irq_nm"
+
+
+# The full line list; the tb ports are derived from it through _signal(),
+# the single place that knows the <name>_i port-name convention.
+LINES = (IrqLine("irq_software"), IrqLine("irq_timer"), IrqLine("irq_external"),
+         *(IrqLine(f"irq_fast[{i}]", i) for i in range(15)),
+         IrqLine("irq_nm"))
 
 
 @dataclass(frozen=True)
@@ -53,6 +75,18 @@ class IrqAgentConfig:
     nmi_hold_cycles: int = 15
 
 
+# UVM irq_seq_item: $countones(all lines) == num_of_interrupt with a soft
+# preference for exactly one. The weights are per count (0 / 1 / >=2), not
+# per combination.
+_NONE_WEIGHT = 1
+_ONE_WEIGHT = 4
+_MANY_WEIGHT = 2
+
+
+def _count_weights(num_lines: int):
+    return [_NONE_WEIGHT, _ONE_WEIGHT] + [_MANY_WEIGHT] * (num_lines - 2)
+
+
 class IbexIrqAgent:
     """Random interrupt line driver."""
 
@@ -60,27 +94,49 @@ class IbexIrqAgent:
         self.dut = dut
         self.cfg = cfg
         self.raise_count = 0
+        # The agent owns its lines: drive them low before anything else can
+        # observe them.
+        for line in LINES:
+            self._signal(line).value = 0
+
+    def _signal(self, line: IrqLine):
+        """The tb port for a line; the single place that knows the
+        ``<name>_i`` port-name convention."""
+        if line.fast_index is not None:
+            return self.dut.irq_fast_i[line.fast_index]
+        return getattr(self.dut, f"{line.name}_i")
 
     def _pick_lines(self):
-        """Choose the raised line combination. UVM-aligned: the number of
-        raised lines is uniform over all combinations with a soft preference
-        for exactly one; when the NMI is disabled it is never raised."""
-        lines = ["irq_software", "irq_timer", "irq_external",
-                 *[f"irq_fast[{i}]" for i in range(15)]]
-        if self.cfg.nmi_enabled:
-            lines.append("irq_nm")
+        """Choose the raised line combination, UVM-aligned (see the weight
+        comment above); when the NMI is disabled it is never raised."""
+        lines = [line for line in LINES
+                 if not line.is_nmi or self.cfg.nmi_enabled]
         num = random.choices(range(len(lines)),
-                             weights=[1] + [4] + [2] * (len(lines) - 2))[0]
+                             weights=_count_weights(len(lines)))[0]
         return random.sample(lines, num) if num else []
 
-    async def _drive(self, names, value):
-        for name in names:
-            if name.startswith("irq_fast"):
-                idx = int(name.split("[")[1].rstrip("]"))
-                self.dut.irq_fast_i[idx].value = value
-            else:
-                getattr(self.dut, f"{name}_i").value = value
+    async def _wait(self, cycles):
+        for _ in range(cycles):
+            await RisingEdge(self.dut.clk_o)
+
+    async def _drive(self, lines, value):
+        for line in lines:
+            self._signal(line).value = value
         await RisingEdge(self.dut.clk_o)
+
+    async def _raise_and_drop(self, lines):
+        """Raise the lines, hold them for a random window, then drop. The
+        NMI is dropped after a short window so it is taken exactly once
+        (see the config comment); the maskable lines may stay high across
+        their handler's mret and simply re-trap."""
+        await self._drive(lines, 1)
+        nmi_lines = [line for line in lines if line.is_nmi]
+        if nmi_lines:
+            await self._wait(self.cfg.nmi_hold_cycles)
+            await self._drive(nmi_lines, 0)
+        await self._wait(random.randint(self.cfg.hold_cycles_min,
+                                        self.cfg.hold_cycles_max))
+        await self._drive(lines, 0)
 
     async def run(self):
         if not self.cfg.enable:
@@ -89,27 +145,9 @@ class IbexIrqAgent:
         logger.info("irq agent: raising random interrupts "
                     "(nmi=%s)", self.cfg.nmi_enabled)
         while True:
-            # Idle gap.
-            await RisingEdge(self.dut.clk_o)
-            for _ in range(random.randint(self.cfg.idle_cycles_min,
-                                          self.cfg.idle_cycles_max)):
-                await RisingEdge(self.dut.clk_o)
-
-            names = self._pick_lines()
-            if names:
+            await self._wait(random.randint(self.cfg.idle_cycles_min,
+                                            self.cfg.idle_cycles_max))
+            lines = self._pick_lines()
+            if lines:
                 self.raise_count += 1
-                await self._drive(names, 1)
-                # Hold long enough for the core to drain the pipeline and
-                # take the interrupt. The NMI is dropped after a short
-                # window so it is taken exactly once (see the config
-                # comment); the maskable lines may stay high across their
-                # handler's mret and simply re-trap.
-                nmi_names = [n for n in names if n == "irq_nm"]
-                if nmi_names:
-                    for _ in range(self.cfg.nmi_hold_cycles):
-                        await RisingEdge(self.dut.clk_o)
-                    await self._drive(nmi_names, 0)
-                for _ in range(random.randint(self.cfg.hold_cycles_min,
-                                              self.cfg.hold_cycles_max)):
-                    await RisingEdge(self.dut.clk_o)
-                await self._drive(names, 0)
+                await self._raise_and_drop(lines)

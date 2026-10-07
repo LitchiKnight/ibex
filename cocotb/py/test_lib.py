@@ -8,9 +8,9 @@ Every test runs the same skeleton: bring the environment up, run until the
 program reports its result through the signature/tohost handshake, let the
 scoreboard catch up with everything retired, then finish the co-simulator
 and assert. Tests differ only in which program they run and which agent
-knobs they enable; the program itself is responsible for deciding whether
-it passed (e.g. the irq test checks its interrupt counters, the error test
-checks the trap it expects).
+knobs they declare on ``IbexCocotbConfig``; the program itself is
+responsible for deciding whether it passed (e.g. the irq test checks its
+interrupt counters, the error test checks the trap it expects).
 """
 
 import logging
@@ -18,19 +18,18 @@ import os
 from pathlib import Path
 
 import cocotb
-from cocotb.triggers import First, RisingEdge, Timer
+from cocotb.triggers import RisingEdge
 
 from env import IbexCocotbConfig
-from mem_agent import classify_test_result
 from tb_env import bring_up
 
 logger = logging.getLogger("cocotb.test")
 
-# The tests retire only a few hundred to a few thousand instructions; five
-# million nanoseconds at a 10ns period leaves plenty of margin for the
-# randomised memory timing (tens of cycles per access) and the IRQ agent's
-# idle gaps.
-TIMEOUT_NS = 5_000_000
+# Upper bound for one wait between two handshake writes. The tests write
+# their result within a few thousand cycles of the previous signature
+# write; five million nanoseconds at a 10ns period leaves plenty of margin
+# for the randomised memory timing and the IRQ agent's idle gaps.
+RESULT_WRITE_TIMEOUT_NS = 5_000_000
 # Number of clock cycles allowed for the scoreboard to catch up with the
 # RVFI monitor after the test has reported its result. Randomised delays
 # stretch each access, and the queue can hold a few hundred items, so a
@@ -55,34 +54,20 @@ def bin_path_from_env():
     return path
 
 
-async def run_ibex_test(dut, error_addrs=()):
+async def run_ibex_test(dut, cfg=None):
     """Run one program to its handshake, check the co-simulator and assert.
 
-    Returns the classification of the observed handshake writes ("pass" or
-    "fail"); the assertions below fail the test when the result is missing
-    or not a pass.
+    The knobs come from ``cfg`` (the tests declare what they need, see
+    tests/test_core.py). Raises when the result is missing or not a pass.
     """
-    cfg = IbexCocotbConfig()
+    if cfg is None:
+        cfg = IbexCocotbConfig()
+
     env = await bring_up(dut, cfg, bin_path_from_env(),
-                         load_addr_from_plusargs(), error_addrs)
+                         load_addr_from_plusargs())
     mem, monitor, scoreboard = env.mem, env.monitor, env.scoreboard
 
-    # Run until the test reports its result. done_event fires on every write
-    # to a watched address, but only some of those writes carry a result
-    # (the first signature write is a CORE_STATUS marker), so keep waiting
-    # until classification succeeds or a full timeout elapses without any
-    # new write.
-    result = None
-    while result is None:
-        mem.done_event.clear()
-        await First(mem.done_event.wait(), Timer(TIMEOUT_NS, unit="ns"))
-        result = classify_test_result(mem.observed_writes,
-                                      cfg.signature_addr, cfg.tohost_addr)
-        if result is None and not mem.done_event.is_set():
-            break
-    assert result is not None, (
-        "timeout: the test never reported its result (signature 0x{:08x}, "
-        "tohost 0x{:08x})".format(cfg.signature_addr, cfg.tohost_addr))
+    result = await mem.wait_for_result(RESULT_WRITE_TIMEOUT_NS)
 
     # Let the scoreboard catch up with everything retired so far. If the
     # scoreboard already died, stop polling: the assertion below must report
@@ -101,6 +86,9 @@ async def run_ibex_test(dut, error_addrs=()):
         "scoreboard did not catch up: processed {}, retired {}".format(
             scoreboard.processed, monitor.retired_count))
     assert monitor.retired_count > 0, "no instructions retired"
+    assert monitor.order_gap is None, (
+        "RVFI order jumped {} -> {}: every later comparison is "
+        "untrustworthy".format(*monitor.order_gap))
 
     matched = await scoreboard.finish()
     logger.info("result=%s, retired %d instructions, matched %d, "

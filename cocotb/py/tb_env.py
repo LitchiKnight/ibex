@@ -6,9 +6,12 @@
 
 A single ``bring_up`` coroutine owns the knowledge of how the DUT inputs are
 initialised, how reset is released and how the memory agent, IRQ agent,
-RVFI monitor and scoreboard are started and wired together, so that every
-test only expresses what it runs instead of how the environment is
-assembled.
+RVFI monitor and scoreboard are assembled, so that every test only
+expresses what it runs instead of how the environment is assembled.
+
+The tests declare their knobs on ``IbexCocotbConfig`` (see env.py); the
+plusargs only override them, and each override is applied in exactly one
+place below.
 """
 
 import logging
@@ -20,7 +23,7 @@ from cocotb.triggers import RisingEdge, Timer
 
 from env import IbexCocotbConfig
 from irq_agent import IbexIrqAgent, IrqAgentConfig
-from mem_agent import IbexMemAgent, MemAgentConfig
+from mem_agent import IbexMemAgent, MemAgentConfig, TestHandshake
 from rvfi_monitor import RVFIMonitor
 from scoreboard import Scoreboard
 
@@ -37,24 +40,54 @@ class Env:
     scoreboard: Scoreboard
 
 
-def _plusarg(name, default):
-    """Read a runtime knob passed by the Makefile as a plusarg; absent means
-    the default (so the flow stays usable without Makefile support)."""
+def _bool_plusarg(name, default):
+    """Read a boolean knob passed by the Makefile as a plusarg; absent means
+    the default. When the plusarg is given it overrides the test's choice."""
     if name not in cocotb.plusargs:
         return default
     return cocotb.plusargs[name] != "0"
 
 
-async def bring_up(dut, cfg: IbexCocotbConfig, bin_path, load_addr: int,
-                   error_addrs=()) -> Env:
-    """Initialise the DUT inputs, release reset and start the components.
+def _zero_delay_pct():
+    """Three-state knob: absent keeps the UVM default (50% of runs pick zero
+    delays); ``=0`` forces the random distribution; any other value forces
+    every delay to zero."""
+    if "ibex_cocotb_zero_delays" not in cocotb.plusargs:
+        return 50
+    return 100 if cocotb.plusargs["ibex_cocotb_zero_delays"] != "0" else 0
 
-    The clock is generated inside the tb; cocotb only drives the remaining
-    stimuli and uses ``clk_o`` as its timebase. The randomisation knobs
-    arrive as Makefile plusargs (single flow for both fixed and randomised
-    runs).
-    """
-    # Static DUT inputs.
+
+def _resolve_mem_cfg(cfg: IbexCocotbConfig, dut) -> MemAgentConfig:
+    """Derive the memory agent configuration from the test-declared knobs
+    and the plusargs.
+
+    The spurious-response feature is forced off on non-secure
+    configurations: the core only gates stray bus responses when SecureIbex
+    is set (ibex_core.sv g_check_mem_response), and the UVM base test
+    applies the same rule."""
+    spurious = _bool_plusarg("ibex_cocotb_spurious_resp",
+                             cfg.spurious_response)
+    if spurious and not int(dut.secure_ibex_o.value):
+        logger.warning("mem agent: spurious responses forced off (the DUT "
+                       "is not a secure configuration and would not gate "
+                       "stray responses)")
+        spurious = False
+    return MemAgentConfig(enable_spurious_response=spurious,
+                          zero_delay_pct=_zero_delay_pct(),
+                          error_addrs=cfg.error_addrs)
+
+
+def _resolve_irq_cfg(cfg: IbexCocotbConfig) -> IrqAgentConfig:
+    return IrqAgentConfig(
+        enable=_bool_plusarg("ibex_cocotb_irq", cfg.irq_enable),
+        nmi_enabled=_bool_plusarg("ibex_cocotb_irq_nmi",
+                                  cfg.irq_nmi_enable))
+
+
+def _init_inputs(dut):
+    """Drive every DUT input before reset is released. The IRQ agent owns
+    its own lines and initialises them itself; everything else is
+    initialised here."""
     dut.instr_gnt_i.value = 0
     dut.instr_rvalid_i.value = 0
     dut.instr_rdata_i.value = 0
@@ -65,11 +98,6 @@ async def bring_up(dut, cfg: IbexCocotbConfig, bin_path, load_addr: int,
     dut.data_rdata_i.value = 0
     dut.data_rdata_intg_i.value = 0
     dut.data_err_i.value = 0
-    dut.irq_software_i.value = 0
-    dut.irq_timer_i.value = 0
-    dut.irq_external_i.value = 0
-    dut.irq_fast_i.value = 0
-    dut.irq_nm_i.value = 0
     dut.debug_req_i.value = 0
     dut.cmd_valid.value = 0
     dut.cmd_op.value = 0
@@ -77,57 +105,35 @@ async def bring_up(dut, cfg: IbexCocotbConfig, bin_path, load_addr: int,
                 dut.cmd_a5, dut.cmd_a6):
         reg.value = 0
 
+
+async def bring_up(dut, cfg: IbexCocotbConfig, bin_path, load_addr: int) -> Env:
+    """Initialise the DUT inputs, release reset and start the components.
+
+    The clock is generated inside the tb; cocotb only drives the remaining
+    stimuli and uses ``clk_o`` as its timebase. The environment is fully
+    assembled and wired before any component starts: nothing may observe
+    the bus while the wiring is incomplete.
+    """
+    _init_inputs(dut)
+
     # Reset.
     dut.rst_ni.value = 0
     await Timer(100, unit="ns")
     dut.rst_ni.value = 1
     await RisingEdge(dut.clk_o)
 
-    # Components.
-    spurious = cfg.spurious_response or _plusarg("ibex_cocotb_spurious_resp",
-                                                 False)
-    # The core only gates stray bus responses when SecureIbex is set
-    # (ibex_core.sv g_check_mem_response); the UVM base test applies the
-    # same rule (spurious responses are disabled for non-secure configs).
-    # With SecureIbex=0 a spurious response would corrupt the core state.
-    if spurious and not int(dut.secure_ibex_o.value):
-        logger.warning("mem agent: spurious responses forced off (the DUT "
-                       "is not a secure configuration and would not gate "
-                       "stray responses)")
-        spurious = False
-
-    # +ibex_cocotb_zero_delays=1 forces every delay to zero, =0 forces the
-    # random distribution; absent leaves the UVM default (50% of runs pick
-    # zero delays).
-    if "ibex_cocotb_zero_delays" in cocotb.plusargs:
-        zero_delay_pct = (
-            100 if cocotb.plusargs["ibex_cocotb_zero_delays"] != "0" else 0)
-    else:
-        zero_delay_pct = 50
-
-    mem_cfg = MemAgentConfig(
-        enable_spurious_response=spurious,
-        zero_delay_pct=zero_delay_pct,
-        error_addrs=tuple(error_addrs),
-    )
-    mem = IbexMemAgent(dut, mem_cfg, cfg.tohost_addr, cfg.signature_addr)
-    mem.load_bin(Path(bin_path), load_addr)
-    cocotb.start_soon(mem.run())
-
-    irq_cfg = IrqAgentConfig(
-        enable=cfg.irq_enable or _plusarg("ibex_cocotb_irq", False),
-        nmi_enabled=cfg.irq_nmi_enable or _plusarg("ibex_cocotb_irq_nmi",
-                                                   False),
-    )
-    irq = IbexIrqAgent(dut, irq_cfg)
-    cocotb.start_soon(irq.run())
-
+    # Assemble the environment completely, then start everything at once.
     monitor = RVFIMonitor(dut)
-    cocotb.start_soon(monitor.run())
+    scoreboard = Scoreboard(dut, monitor)
+    handshake = TestHandshake(cfg.signature_addr, cfg.tohost_addr)
+    mem = IbexMemAgent(dut, _resolve_mem_cfg(cfg, dut), handshake,
+                       on_access=scoreboard.notify_dside)
+    irq = IbexIrqAgent(dut, _resolve_irq_cfg(cfg))
 
-    scoreboard = Scoreboard(dut)
     await scoreboard.init_cosim()
-    mem.on_access = scoreboard.notify_dside
-    cocotb.start_soon(scoreboard.run(monitor))
+    mem.load_bin(Path(bin_path), load_addr)
+
+    for component in (mem, irq, monitor, scoreboard):
+        cocotb.start_soon(component.run())
 
     return Env(mem=mem, irq=irq, monitor=monitor, scoreboard=scoreboard)

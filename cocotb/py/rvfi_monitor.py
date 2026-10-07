@@ -18,6 +18,17 @@ from cocotb.triggers import RisingEdge
 
 logger = logging.getLogger("cocotb.rvfi_monitor")
 
+# crash_dump_t = {current_pc, next_pc, last_data_addr, exception_pc,
+# exception_addr}, MSB first. The single place that knows the layout.
+CRASH_DUMP_FIELDS = ("current_pc", "next_pc", "last_data_addr",
+                     "exception_pc", "exception_addr")
+
+
+def decode_crash_dump(dump: int):
+    """Decode the tb's latched crash_dump_t into a field-name dict."""
+    return {name: (dump >> (32 * (len(CRASH_DUMP_FIELDS) - 1 - i))) & 0xFFFFFFFF
+            for i, name in enumerate(CRASH_DUMP_FIELDS)}
+
 
 @dataclass
 class RvfiItem:
@@ -41,6 +52,8 @@ class RvfiItem:
     # IRQ-only events carry no retired instruction; the scoreboard only
     # updates the co-simulator's interrupt state for them.
     irq_only: bool = False
+    # The tb's trap crash dump, only meaningful when trap is set.
+    crash_dump: int = 0
 
 
 class RVFIMonitor:
@@ -57,21 +70,30 @@ class RVFIMonitor:
         self._queue = Queue()
         self.retired_count = 0
         self.irq_only_count = 0
+        # (previous_order, jumped_order) of the first RVFI order gap. A gap
+        # means a sampling error, which is exactly the kind of bug that
+        # otherwise surfaces as baffling cosim mismatches; the tests treat
+        # it as fatal rather than letting the run continue.
+        self.order_gap = None
         self._prev_order = None
-        self._prev_irq_only = False
+        self._prev_irq_event = False
 
     async def run(self):
         while True:
             await RisingEdge(self.dut.clk_o)
             valid = int(self.dut.rvfi_valid.value)
             irq_event = int(self.dut.rvfi_ext_irq_valid.value)
+            # Consecutive irq-only captures are one interrupt event: the
+            # RTL holds rvfi_ext_irq_valid high from the event until the
+            # handler's first instruction retires. Edge detection makes
+            # this independent of that RTL behaviour; the previous level
+            # is tracked every cycle, empty ones included, so a level that
+            # drops and rises again is a new event.
+            irq_only = irq_event and not valid and not self._prev_irq_event
+            self._prev_irq_event = irq_event
             if not (valid or irq_event):
                 continue
 
-            # Consecutive irq-only captures are one interrupt event: the
-            # RTL holds rvfi_ext_irq_valid high from the event until the
-            # handler's first instruction retires.
-            irq_only = (irq_event and not valid) and not self._prev_irq_only
             item = RvfiItem(
                 order=int(self.dut.rvfi_order.value),
                 pc=int(self.dut.rvfi_pc_rdata.value),
@@ -88,34 +110,25 @@ class RVFIMonitor:
                 nmi_int=int(self.dut.rvfi_ext_nmi_int.value),
                 debug_req=int(self.dut.rvfi_ext_debug_req.value),
                 irq_only=irq_only,
+                crash_dump=int(self.dut.trap_crash_dump.value),
             )
 
-            if item.trap:
-                # crash_dump_t = {current_pc, next_pc, last_data_addr,
-                # exception_pc, exception_addr}, MSB first.
-                dump = int(self.dut.trap_crash_dump.value)
-                logger.debug(
-                    "trap at order=%d pc=0x%08x: exception_pc=0x%08x "
-                    "exception_addr=0x%08x next_pc=0x%08x last_data_addr="
-                    "0x%08x",
-                    item.order, item.pc, (dump >> 32) & 0xFFFFFFFF,
-                    dump & 0xFFFFFFFF, (dump >> 96) & 0xFFFFFFFF,
-                    (dump >> 64) & 0xFFFFFFFF)
+            if item.nmi or item.nmi_int or irq_only:
+                logger.debug("item order=%d pc=0x%08x nmi=%d nmi_int=%d "
+                             "irq_only=%d", item.order, item.pc, item.nmi,
+                             item.nmi_int, int(irq_only))
 
             # RVFI guarantees one incrementing order value per retirement; a
             # gap would mean a sampling error, which is exactly the kind of
             # bug that otherwise surfaces as baffling cosim mismatches.
             # IRQ-only events retire nothing, so they do not advance order.
-            if item.nmi or item.nmi_int or irq_only:
-                logger.debug("item order=%d pc=0x%08x nmi=%d nmi_int=%d "
-                             "irq_only=%d", item.order, item.pc, item.nmi,
-                             item.nmi_int, int(irq_only))
-            self._prev_irq_only = irq_only
             if not irq_only:
                 if (self._prev_order is not None
                         and item.order != self._prev_order + 1):
                     logger.error("rvfi order jumped: %d -> %d (missed a "
                                  "retirement?)", self._prev_order, item.order)
+                    if self.order_gap is None:
+                        self.order_gap = (self._prev_order, item.order)
                 self._prev_order = item.order
                 self.retired_count += 1
             else:

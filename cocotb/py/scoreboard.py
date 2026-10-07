@@ -13,11 +13,11 @@ because Verilator's VPI does not expose DPI objects to cocotb directly.
 """
 
 import logging
-from collections import deque
 
-from cocotb.triggers import Event, RisingEdge
+from cocotb.triggers import Lock, RisingEdge
 
 from mem_agent import DsideAccess
+from rvfi_monitor import decode_crash_dump
 
 logger = logging.getLogger("cocotb.scoreboard")
 
@@ -41,79 +41,68 @@ class Scoreboard:
     CMD_NOTIFY_DSIDE = 5
     CMD_SET_MIP = 6
 
-    def __init__(self, dut):
+    def __init__(self, dut, monitor):
         self.dut = dut
+        self.monitor = monitor
         self.processed = 0
         self.error = None
-        self.done_event = Event()
-        self._cmd_queue = deque()
+        self._cmd_lock = Lock()
 
     async def cmd(self, op, a0=0, a1=0, a2=0, a3=0, a4=0, a5=0, a6=0):
-        # The command interface is shared between the scoreboard and the
-        # memory agent's access notifications, so commands are serialized
-        # with a FIFO queue: a waiter may proceed only when it is the head.
-        # The head check has no await in it, so it is atomic under cocotb's
-        # single-threaded scheduler.
-        token = object()
-        self._cmd_queue.append(token)
-        try:
-            while self._cmd_queue[0] is not token:
-                await RisingEdge(self.dut.clk_o)
+        # The command interface is shared between the scoreboard steps and
+        # the memory agent's access notifications; the Lock serialises them
+        # (cocotb's Lock acquires in FIFO order). The interface is restored
+        # even when the handshake fails, so the next command cannot wedge.
+        async with self._cmd_lock:
+            try:
+                dut = self.dut
+                dut.cmd_op.value = op
+                dut.cmd_a0.value = a0
+                dut.cmd_a1.value = a1
+                dut.cmd_a2.value = a2
+                dut.cmd_a3.value = a3
+                dut.cmd_a4.value = a4
+                dut.cmd_a5.value = a5
+                dut.cmd_a6.value = a6
+                dut.cmd_valid.value = 1
 
-            dut = self.dut
-            dut.cmd_op.value = op
-            dut.cmd_a0.value = a0
-            dut.cmd_a1.value = a1
-            dut.cmd_a2.value = a2
-            dut.cmd_a3.value = a3
-            dut.cmd_a4.value = a4
-            dut.cmd_a5.value = a5
-            dut.cmd_a6.value = a6
-            dut.cmd_valid.value = 1
-
-            await RisingEdge(dut.clk_o)
-            for _ in range(CMD_WEDGE_CYCLES):
-                if int(dut.cmd_ack.value):
-                    break
                 await RisingEdge(dut.clk_o)
-            else:
-                raise ScoreboardError(
-                    "command interface wedged: cmd_ack never asserted")
-            ret = int(dut.cmd_ret0.value)
+                for _ in range(CMD_WEDGE_CYCLES):
+                    if int(dut.cmd_ack.value):
+                        break
+                    await RisingEdge(dut.clk_o)
+                else:
+                    raise ScoreboardError(
+                        "command interface wedged: cmd_ack never asserted")
+                ret = int(dut.cmd_ret0.value)
 
-            dut.cmd_valid.value = 0
-            await RisingEdge(dut.clk_o)
-            for _ in range(CMD_WEDGE_CYCLES):
-                if not int(dut.cmd_ack.value):
-                    break
+                dut.cmd_valid.value = 0
                 await RisingEdge(dut.clk_o)
-            else:
-                raise ScoreboardError(
-                    "command interface wedged: cmd_ack never dropped")
-            return ret
-        finally:
-            # Restore the interface even if the transaction failed, so the
-            # queue cannot wedge permanently.
-            assert self._cmd_queue[0] is token
-            self._cmd_queue.popleft()
-            self.dut.cmd_valid.value = 0
+                for _ in range(CMD_WEDGE_CYCLES):
+                    if not int(dut.cmd_ack.value):
+                        break
+                    await RisingEdge(dut.clk_o)
+                else:
+                    raise ScoreboardError(
+                        "command interface wedged: cmd_ack never dropped")
+                return ret
+            finally:
+                self.dut.cmd_valid.value = 0
 
     async def init_cosim(self):
         if not await self.cmd(self.CMD_INIT):
             raise ScoreboardError("spike_cosim_init failed (see sim log)")
         logger.info("SpikeCosim initialised")
 
-    async def run(self, monitor):
+    async def run(self):
         try:
             while True:
-                item = await monitor.get()
+                item = await self.monitor.get()
                 await self.step_item(item)
                 self.processed += 1
         except ScoreboardError as error:
             self.error = str(error)
             logger.error("scoreboard stopped: %s", error)
-        finally:
-            self.done_event.set()
 
     async def step_item(self, item):
         if item.irq_only:
@@ -156,11 +145,17 @@ class Scoreboard:
         )
         if not ok:
             num_errors = await self.cmd(self.CMD_GET_ERRORS)
+            details = ""
+            if item.trap:
+                dump = decode_crash_dump(item.crash_dump)
+                details = (" (exception_pc=0x{:08x}, "
+                           "exception_addr=0x{:08x})").format(
+                    dump["exception_pc"], dump["exception_addr"])
             raise ScoreboardError(
                 "cosim mismatch at order={} pc=0x{:08x} (insn=0x{:08x}, "
-                "trap={}, intr={}, {} error(s), see sim log)".format(
-                    item.order, item.pc, item.insn, item.trap, item.intr,
-                    num_errors)
+                "trap={}, {}{} error(s), see sim log)".format(
+                    item.order, item.pc, item.insn, item.trap, num_errors,
+                    details)
             )
 
     async def notify_dside(self, access: DsideAccess):
@@ -168,9 +163,9 @@ class Scoreboard:
         interface, once its response has been observed (mirrors
         ``riscv_cosim_notify_dside_access`` in the UVM scoreboard).
 
-        M1 note: the rv32ui tests run in M mode throughout and use aligned
-        accesses, so ``m_mode_access`` is fixed and the misaligned flags are
-        always clear; randomized access modelling arrives with M2.
+        The error/misaligned/m_mode flags come from the LSU probes the tb
+        latches at the (request && grant) address phase; the memory agent
+        carries them in the DsideAccess.
         """
         # CMD_NOTIFY_DSIDE argument packing (authoritative here; the tb
         # decodes it with the DSIDE_* constants):

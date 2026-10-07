@@ -4,14 +4,15 @@
 
 """Configuration for the cocotb verification environment.
 
-Only the end-of-test handshake addresses are Python-side configuration. The
-co-simulator construction parameters (ISA string, PMP, ICache, debug module
-range, ...) live in ``tb/ibex_cocotb_tb.sv``, which is their single
+The single authority for the Python-side configuration: each test declares
+the knobs it needs with ``dataclasses.replace`` on this object (see
+tests/test_core.py). The plusargs are only an override mechanism applied in
+one place in ``tb_env.bring_up``; when a plusarg is given it wins.
+
+The co-simulator construction parameters (ISA string, PMP, ICache, debug
+module range, ...) live in ``tb/ibex_cocotb_tb.sv``, which is their single
 authority, and the image load base address is passed by the Makefile
 through the ``+ibex_cocotb_load_addr`` plusarg.
-
-The agent randomisation knobs are runtime plusargs too (``bring_up`` reads
-them); the defaults below match the UVM agents.
 """
 
 from dataclasses import dataclass
@@ -22,21 +23,17 @@ class IbexCocotbConfig:
     # End-of-test handshake addresses. The ibex-patched riscv-test-env writes
     # the result to the signature address (dv/uvm/core_ibex/directed_tests/
     # ibex_macros.h, SIGNATURE_ADDR); a TEST_RESULT write (value[7:0] == 1)
-    # with value[8] == 0 means pass. Failures and exceptions also write to the
-    # ``.tohost`` section of the directed-test link script, with an odd value.
-    # The interpretation itself lives in mem_agent.classify_test_result.
+    # with value[8] == 0 means pass. The ecall tests pass through the trap
+    # vector instead, writing TESTNUM == 1 to the ``.tohost`` section of the
+    # directed-test link script. The interpretation itself lives in
+    # mem_agent.TestHandshake.classify.
     signature_addr: int = 0x8FFFFFF8
     tohost_addr: int = 0x80001000
-    # Memory agent knobs (UVM ibex_mem_intf_response_agent_cfg defaults;
-    # overridable through the +ibex_cocotb_spurious_resp and
-    # +ibex_cocotb_zero_delays plusargs).
+    # Agent knobs, declared per test (the plusargs may override them).
     spurious_response: bool = False
-    zero_delays: bool = False
-    # IRQ agent knobs (overridable through the +ibex_cocotb_irq and
-    # +ibex_cocotb_irq_nmi plusargs).
     irq_enable: bool = False
     irq_nmi_enable: bool = False
-    # Poisoned address used by the dedicated error test: accesses to it
-    # always receive an error response (unmapped in the co-simulator's
-    # memory, so Spike faults on it the same way the DUT does).
-    error_addr: int = 0xDEAD0000
+    # Poisoned addresses for the memory agent: accesses to them always
+    # receive an error response (unmapped in the co-simulator's memory, so
+    # Spike faults on them the same way the DUT does).
+    error_addrs: tuple = ()

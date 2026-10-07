@@ -78,31 +78,19 @@ endif
 
 BIN := $(OUT_DIR)/$(TESTSUITE)_$(TEST).bin
 
-# Agent randomisation knobs (consumed as plusargs by py/tb_env.py). The M2
-# acceptance runs the compliance suites with random memory delays and the
-# IRQ agent on; the dedicated tests override them. Spurious responses are
-# supported by the agent but stay off on this tb: its SecureIbex=0 core
-# does not gate stray bus responses, so tb_env forces them off (the same
-# rule as the UVM base test).
+# Agent randomisation knobs are declared by the tests on IbexCocotbConfig
+# (tests/test_core.py); the plusargs below are only an override mechanism,
+# applied in one place in py/tb_env.py. Spurious responses are supported by
+# the agent but stay off on this tb: its SecureIbex=0 core does not gate
+# stray bus responses, so tb_env forces them off (the same rule as the UVM
+# base test). Leave IBEX_COCOTB_OPTS empty unless overriding a knob for a
+# one-off run.
 #   +ibex_cocotb_zero_delays=1    force all memory delays to zero
 #   +ibex_cocotb_zero_delays=0    force the random delay distribution
 #   +ibex_cocotb_spurious_resp=1  request spurious dside responses
 #   +ibex_cocotb_irq=0            disable the IRQ agent
 #   +ibex_cocotb_irq_nmi=1        include the NMI line in the IRQ agent
-ifeq ($(TESTSUITE),sw)
-  ifeq ($(TEST),irq_test)
-    # The NMI line is off by default: on this tb (WritebackStage=0) the DUT
-    # retires the in-flight instruction after the irq-only RVFI event, which
-    # the co-simulator's NMI model (trap at the very next step) cannot
-    # match. The UVM's NMI tests run on WritebackStage=1 configurations.
-    # The NMI handler in irq_test.S stays for a WB=1 variant.
-    IBEX_COCOTB_OPTS := +ibex_cocotb_irq=1 +ibex_cocotb_irq_nmi=0
-  else ifeq ($(TEST),error_test)
-    IBEX_COCOTB_OPTS := +ibex_cocotb_irq=0 +ibex_cocotb_irq_nmi=0
-  endif
-else
-  IBEX_COCOTB_OPTS := +ibex_cocotb_irq=1 +ibex_cocotb_irq_nmi=0
-endif
+IBEX_COCOTB_OPTS ?=
 
 # Image load base address: the Python memory model loads the binary here and
 # the tb (CMD_INIT) uses the same plusarg for the co-simulator backdoor
