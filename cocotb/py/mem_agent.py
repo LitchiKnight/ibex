@@ -225,6 +225,9 @@ class IbexMemAgent:
         # notification raised): wait_for_result raises it instead of timing
         # out, so the failure is attributed to its cause.
         self.error = None
+        # Address of the last instruction fetch answered with an error,
+        # cleared by the scoreboard's consume_iside_error().
+        self._pending_iside_error = None
         # Chosen once per run, like the UVM zero_delays rand bit.
         self._zero_delays = (
             random.choices([True, False],
@@ -316,6 +319,21 @@ class IbexMemAgent:
             return True
         return addr in self.cfg.error_addrs
 
+    # -- instruction-side error reporting --------------------------------------
+
+    def _record_iside_error(self, addr: int):
+        """Remember that the instruction port just answered a fetch at
+        ``addr`` with an error, for the scoreboard to forward to the
+        co-simulator before the trap's step (the UVM ifetch queue)."""
+        self._pending_iside_error = addr
+
+    def consume_iside_error(self) -> int | None:
+        """Take and clear the pending instruction-side error address, or
+        None. The scoreboard calls this for every retired trap item."""
+        addr = self._pending_iside_error
+        self._pending_iside_error = None
+        return addr
+
     # -- delay selection -----------------------------------------------------
 
     def _grant_delay(self):
@@ -375,10 +393,11 @@ class IbexMemAgent:
             if not int(self.dut.instr_req_o.value):
                 continue
             request_addr = int(self.dut.instr_addr_o.value)
+            error = self._take_error_for(request_addr)
             response_data = self.read_word(request_addr)
-            logger.debug("instr req cycle %d addr 0x%08x -> 0x%08x",
+            logger.debug("instr req cycle %d addr 0x%08x -> 0x%08x err=%d",
                          cocotb.utils.get_sim_time(unit="ns") // 10,
-                         request_addr, response_data)
+                         request_addr, response_data, int(error))
             gnt_delay = self._grant_delay()
             await self._wait_cycles(gnt_delay)
             await self._drive_grant(self.dut.instr_gnt_i, "instr")
@@ -386,10 +405,13 @@ class IbexMemAgent:
             await self._wait_cycles(valid_delay)
             await self._drive_response(
                 self.dut.instr_rvalid_i, self.dut.instr_rdata_i,
-                self.dut.instr_err_i, response_data, 0, "instr")
+                self.dut.instr_err_i, response_data, int(error), "instr")
+            if error:
+                self.error_count += 1
+                self._record_iside_error(request_addr)
             if self.on_bus_event is not None:
                 self.on_bus_event(BusEvent(
-                    is_instr=True, addr=request_addr,
+                    is_instr=True, addr=request_addr, error=bool(error),
                     added_delay=gnt_delay + valid_delay))
 
     async def _serve_data_port(self):

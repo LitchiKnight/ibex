@@ -47,9 +47,13 @@ class Scoreboard:
     retired count has been processed.
     """
 
-    def __init__(self, cosim: Cosim, monitor):
+    def __init__(self, cosim: Cosim, monitor, iside_error_source=None):
         self.cosim = cosim
         self.monitor = monitor
+        # The memory agent, which remembers the address of any instruction
+        # fetch it answered with an error; the scoreboard forwards it to
+        # the co-simulator before the trap's step.
+        self._iside_error_source = iside_error_source
         self.processed = 0
         self.error = None
         self._progress = Event()
@@ -99,6 +103,14 @@ class Scoreboard:
             # debug_req, no mcycle, no step.
             await self.cosim.set_mip(item.nmi, item.nmi_int, item.pre_mip)
             return
+
+        # An instruction-fetch error answered by the memory agent must
+        # reach the co-simulator before the trap's step (the UVM
+        # scoreboard's riscv_cosim_set_iside_error from its ifetch queue).
+        if item.trap and self._iside_error_source is not None:
+            iside_addr = self._iside_error_source.consume_iside_error()
+            if iside_addr is not None:
+                await self.cosim.set_iside_error(iside_addr)
 
         ok = await self.cosim.step(
             pc=item.pc,

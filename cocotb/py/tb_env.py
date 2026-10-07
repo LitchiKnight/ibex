@@ -151,12 +151,14 @@ async def bring_up(dut, cfg: IbexCocotbConfig, bin_path, load_addr: int) -> Env:
                 else None)
     monitor = RVFIMonitor(dut, on_retire=coverage.on_retire if coverage
                           else None)
-    scoreboard = Scoreboard(cosim, monitor)
     handshake = TestHandshake(cfg.signature_addr, cfg.tohost_addr)
     mem = IbexMemAgent(dut, _resolve_mem_cfg(cfg, dut), handshake,
                        on_access=cosim.notify_dside,
                        on_bus_event=coverage.on_bus_event if coverage
                        else None)
+    # The scoreboard reads the agent's pending instruction-side error
+    # before each trap step (the UVM ifetch queue equivalent).
+    scoreboard = Scoreboard(cosim, monitor, iside_error_source=mem)
     irq = IbexIrqAgent(dut, _resolve_irq_cfg(cfg))
 
     await cosim.init_cosim()

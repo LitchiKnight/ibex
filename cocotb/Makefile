@@ -85,6 +85,14 @@ else ifeq ($(TESTSUITE),sw)
     # agent through the plusarg (plain hex, parsed by py/tb_env.py).
     SW_TEST_INC := -DERROR_ADDR=$(IBEX_ERROR_ADDR)
     EXTRA_PLUSARGS := +ibex_cocotb_error_addrs=$(subst 0x,,$(IBEX_ERROR_ADDR))
+  else ifeq ($(TEST),iside_error_test)
+    TESTCASE := test_iside_error
+    # The poisoned address is shared with the data-side error test: the
+    # memory agent answers both data accesses and instruction fetches to
+    # it with an error, and the scoreboard forwards the fetch error to the
+    # co-simulator (CMD_SET_ISIDE_ERROR) before the trap's step.
+    SW_TEST_INC := -DERROR_ADDR=$(IBEX_ERROR_ADDR)
+    EXTRA_PLUSARGS := +ibex_cocotb_error_addrs=$(subst 0x,,$(IBEX_ERROR_ADDR))
   else
     $(error unknown sw test '$(TEST)')
   endif

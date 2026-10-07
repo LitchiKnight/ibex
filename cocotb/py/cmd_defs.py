@@ -23,6 +23,7 @@ OPCODES = {
     "CMD_NOTIFY_DSIDE": 0x05,
     "CMD_SET_MIP": 0x06,
     "CMD_GET_ERROR_STR": 0x07,
+    "CMD_SET_ISIDE_ERROR": 0x08,
 }
 
 # Bit positions of the packed CMD_STEP arguments.

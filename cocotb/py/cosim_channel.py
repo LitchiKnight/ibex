@@ -45,6 +45,7 @@ class CosimChannel:
     CMD_NOTIFY_DSIDE = OPCODES["CMD_NOTIFY_DSIDE"]
     CMD_SET_MIP = OPCODES["CMD_SET_MIP"]
     CMD_GET_ERROR_STR = OPCODES["CMD_GET_ERROR_STR"]
+    CMD_SET_ISIDE_ERROR = OPCODES["CMD_SET_ISIDE_ERROR"]
 
     def __init__(self, dut):
         self.dut = dut

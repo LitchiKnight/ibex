@@ -336,7 +336,10 @@ SKIPPED = {
         "stall/unstall cycles are ID-stage facts",
     # Structurally impossible in this tb, not just unsampled.
     "cp_id_instr_category FetchError bin":
-        "the memory agent never injects instruction-side errors",
+        "an instruction-fetch error trap retires with an insn of zero on "
+        "RVFI, indistinguishable from an illegal-instruction trap, so the "
+        "fetch-error category cannot be derived (the iside_error_test "
+        "still verifies the trap itself)",
     "cp_id_instr_category CompressedIllegal bin":
         "RVFI presents the expanded instruction, so the illegal compressed "
         "encoding is not distinguishable from an illegal uncompressed one",

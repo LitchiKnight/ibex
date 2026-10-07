@@ -211,10 +211,11 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
   // with the 0 init-failure return value.
   function automatic int unsigned layout_fingerprint();
     int unsigned h = 32'h811c0001;
-    int unsigned values[22] = '{
+    int unsigned values[23] = '{
       32'(`CMD_INIT), 32'(`CMD_STEP), 32'(`CMD_GET_ERRORS),
       32'(`CMD_GET_INSN_CNT), 32'(`CMD_RELEASE), 32'(`CMD_NOTIFY_DSIDE),
       32'(`CMD_SET_MIP), 32'(`CMD_GET_ERROR_STR),
+      32'(`CMD_SET_ISIDE_ERROR),
       `STEP_RD_ADDR_LSB, `STEP_RF_WR_SUPPRESS_BIT, `STEP_TRAP_BIT,
       `STEP_NMI_INT_BIT, `STEP_NMI_BIT, `STEP_DEBUG_REQ_BIT,
       `DSIDE_STORE_BIT, `DSIDE_ERROR_BIT, `DSIDE_MIS_FIRST_BIT,
@@ -374,6 +375,13 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
             riscv_cosim_set_nmi(cosim_handle, cmd_a2[`SETMIP_NMI_BIT]);
             riscv_cosim_set_nmi_int(cosim_handle, cmd_a2[`SETMIP_NMI_INT_BIT]);
             riscv_cosim_set_mip(cosim_handle, cmd_a3, cmd_a3);
+            cmd_ret0 <= 32'h1;
+          end
+          `CMD_SET_ISIDE_ERROR: begin
+            // Instruction-fetch error at cmd_a0, issued before the step of
+            // the trap it produced (the UVM scoreboard's
+            // riscv_cosim_set_iside_error from its ifetch queue).
+            riscv_cosim_set_iside_error(cosim_handle, cmd_a0);
             cmd_ret0 <= 32'h1;
           end
           `CMD_GET_ERROR_STR: begin

@@ -170,6 +170,15 @@ class Cosim:
         if not await self._ch.cmd(self._ch.CMD_SET_MIP, a2=a2, a3=pre_mip):
             raise CosimError("CMD_SET_MIP failed")
 
+    async def set_iside_error(self, addr):
+        """Tell the co-simulator about an instruction-fetch error at
+        ``addr``, before the step of the trap it produced (mirrors the UVM
+        scoreboard's ``riscv_cosim_set_iside_error`` from its ifetch
+        queue). The next step must produce an instruction fault there."""
+        self._check_alive()
+        if not await self._ch.cmd(self._ch.CMD_SET_ISIDE_ERROR, a0=addr):
+            raise CosimError("CMD_SET_ISIDE_ERROR failed")
+
     async def notify_dside(self, access: "DsideAccess"):
         """Tell the co-simulator about a data-side access seen on the memory
         interface, once its response has been observed (mirrors

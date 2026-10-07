@@ -71,5 +71,10 @@ async def test_error(dut):
 
 
 @cocotb.test()
+async def test_iside_error(dut):
+    await run_ibex_test(dut)
+
+
+@cocotb.test()
 async def test_random(dut):
     await run_ibex_test(dut)
