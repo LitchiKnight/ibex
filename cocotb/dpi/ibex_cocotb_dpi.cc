@@ -125,6 +125,34 @@ int ibex_cocotb_drain_errors(void *cosim_handle) {
   return num_errors;
 }
 
+// Transfer the indexed comparison error string 32 bits at a time: word ==
+// -1 returns the string length, otherwise word w returns bytes [4w..4w+3]
+// (byte i at bits [8*(i%4)+7:8*(i%4)]). An out-of-range index or word
+// returns 0. The error list is not modified, so the caller can drain it
+// afterwards. The word-wise protocol keeps the DPI arguments plain ints:
+// Verilator does not accept output array arguments in DPI imports.
+int ibex_cocotb_get_error_str(void *cosim_handle, int index, int word) {
+  auto *cosim = static_cast<Cosim *>(cosim_handle);
+  const auto &errors = cosim->get_errors();
+  if (index < 0 || static_cast<size_t>(index) >= errors.size()) {
+    return 0;
+  }
+  const std::string &message = errors[index];
+  if (word == -1) {
+    return static_cast<int>(message.size());
+  }
+  const size_t base = static_cast<size_t>(word) * 4;
+  if (base >= message.size()) {
+    return 0;
+  }
+  uint32_t out = 0;
+  for (int i = 0; i < 4 && base + i < message.size(); ++i) {
+    out |= static_cast<uint32_t>(
+               static_cast<unsigned char>(message[base + i])) << (8 * i);
+  }
+  return static_cast<int>(out);
+}
+
 unsigned int ibex_cocotb_get_insn_cnt(void *cosim_handle) {
   return static_cast<Cosim *>(cosim_handle)->get_insn_cnt();
 }

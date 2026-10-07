@@ -7,92 +7,47 @@
 Mirrors ``dv/uvm/core_ibex/common/ibex_cosim_agent/ibex_cosim_scoreboard.sv``:
 each retired instruction captured by the RVFI monitor is stepped through the
 SpikeCosim co-simulator (the unchanged C++ comparison core from dv/cosim,
-see cocotb/PLAN.md) and the results are compared. The DPI calls themselves
-are issued from ``tb/ibex_cocotb_tb.sv`` through a small command interface,
-because Verilator's VPI does not expose DPI objects to cocotb directly.
+see cocotb/PLAN.md) and the results are compared. The steps go through the
+``Cosim`` semantic layer (py/cosim.py); the raw command handshake lives in
+py/cosim_channel.py. A mismatch raises a structured
+``CosimMismatchError`` carrying the instruction identity, the decoded trap
+crash dump and the error strings drained from the co-simulator.
+
+``drain()`` is the tests' catch-up interface: it returns once every item
+retired up to the call has been processed, so the tests never poll the
+processed/retired counters themselves.
 """
 
 import logging
 
-from cocotb.triggers import Lock, RisingEdge
+from cocotb.triggers import Event, First, Timer
 
-from mem_agent import DsideAccess
+from cosim import Cosim, CosimMismatchError
 from rvfi_monitor import decode_crash_dump
 
 logger = logging.getLogger("cocotb.scoreboard")
 
-# Upper bound (in clock cycles) for one command handshake. The handshake
-# normally takes four cycles; anything beyond this means the interface is
-# wedged and waiting longer cannot help.
-CMD_WEDGE_CYCLES = 1000
-
-
-class ScoreboardError(Exception):
-    pass
+# Upper bound on how many error strings the mismatch report pulls from the
+# co-simulator; anything beyond it is printed by the drain in finish().
+MAX_MISMATCH_ERRORS = 16
 
 
 class Scoreboard:
-    # Command opcodes (keep in sync with tb/ibex_cocotb_tb.sv).
-    CMD_INIT = 0
-    CMD_STEP = 1
-    CMD_GET_ERRORS = 2
-    CMD_GET_INSN_CNT = 3
-    CMD_RELEASE = 4
-    CMD_NOTIFY_DSIDE = 5
-    CMD_SET_MIP = 6
+    """Consume RVFI items in retirement order and step each one through the
+    co-simulator.
 
-    def __init__(self, dut, monitor):
-        self.dut = dut
+    ``error`` holds the exception that stopped the scoreboard (a structured
+    ``CosimMismatchError`` or a transport failure); ``processed`` counts
+    consumed items. ``drain()`` waits until a snapshot of the monitor's
+    retired count has been processed.
+    """
+
+    def __init__(self, cosim: Cosim, monitor):
+        self.cosim = cosim
         self.monitor = monitor
         self.processed = 0
         self.error = None
-        self._cmd_lock = Lock()
-
-    async def cmd(self, op, a0=0, a1=0, a2=0, a3=0, a4=0, a5=0, a6=0):
-        # The command interface is shared between the scoreboard steps and
-        # the memory agent's access notifications; the Lock serialises them
-        # (cocotb's Lock acquires in FIFO order). The interface is restored
-        # even when the handshake fails, so the next command cannot wedge.
-        async with self._cmd_lock:
-            try:
-                dut = self.dut
-                dut.cmd_op.value = op
-                dut.cmd_a0.value = a0
-                dut.cmd_a1.value = a1
-                dut.cmd_a2.value = a2
-                dut.cmd_a3.value = a3
-                dut.cmd_a4.value = a4
-                dut.cmd_a5.value = a5
-                dut.cmd_a6.value = a6
-                dut.cmd_valid.value = 1
-
-                await RisingEdge(dut.clk_o)
-                for _ in range(CMD_WEDGE_CYCLES):
-                    if int(dut.cmd_ack.value):
-                        break
-                    await RisingEdge(dut.clk_o)
-                else:
-                    raise ScoreboardError(
-                        "command interface wedged: cmd_ack never asserted")
-                ret = int(dut.cmd_ret0.value)
-
-                dut.cmd_valid.value = 0
-                await RisingEdge(dut.clk_o)
-                for _ in range(CMD_WEDGE_CYCLES):
-                    if not int(dut.cmd_ack.value):
-                        break
-                    await RisingEdge(dut.clk_o)
-                else:
-                    raise ScoreboardError(
-                        "command interface wedged: cmd_ack never dropped")
-                return ret
-            finally:
-                self.dut.cmd_valid.value = 0
-
-    async def init_cosim(self):
-        if not await self.cmd(self.CMD_INIT):
-            raise ScoreboardError("spike_cosim_init failed (see sim log)")
-        logger.info("SpikeCosim initialised")
+        self._progress = Event()
 
     async def run(self):
         try:
@@ -100,8 +55,9 @@ class Scoreboard:
                 item = await self.monitor.get()
                 await self.step_item(item)
                 self.processed += 1
-        except ScoreboardError as error:
-            self.error = str(error)
+                self._progress.set()
+        except Exception as error:
+            self.error = error
             logger.error("scoreboard stopped: %s", error)
 
     async def step_item(self, item):
@@ -109,81 +65,86 @@ class Scoreboard:
             # IRQ-only RVFI events notify the co-simulator about interrupts
             # that fire without a retired instruction (e.g. while the
             # pipeline is empty). Mirrors the UVM scoreboard's irq_only
-            # branch: set_nmi, set_nmi_int, set_mip(pre_mip, pre_mip) — no
+            # branch: set_nmi, set_nmi_int, set_mip(pre_mip, pre_mip) - no
             # debug_req, no mcycle, no step.
-            #   cmd_a2 : {29'b0, nmi_int, nmi, 1'b0},
-            #   cmd_a3 : pre_mip (used for both mip arguments, as in UVM).
-            a2 = ((item.nmi & 1) << 1) | ((item.nmi_int & 1) << 2)
-            await self.cmd(self.CMD_SET_MIP, a2=a2, a3=item.pre_mip)
+            await self.cosim.set_mip(item.nmi, item.nmi_int, item.pre_mip)
             return
 
-        # CMD_STEP argument packing. This is the authoritative definition of
-        # the bit layout; tb/ibex_cocotb_tb.sv only decodes it through named
-        # constants (STEP_*). The tb issues the DPI calls in the same order
-        # as the UVM scoreboard: debug_req, nmi, nmi_int, mip, mcycle, step.
-        #   cmd_a0 : pc, cmd_a1 : rd_wdata,
-        #   cmd_a2 : {22'b0, debug_req, nmi, nmi_int, trap,
-        #             rf_wr_suppress, rd_addr[4:0]},
-        #   cmd_a3/a4 : pre_mip/post_mip, cmd_a5/a6 : mcycle[31:0]/[63:32].
-        a2 = (
-            (item.rd_addr & 0x1F)
-            | ((item.rf_wr_suppress & 1) << 5)
-            | ((item.trap & 1) << 6)
-            | ((item.nmi_int & 1) << 7)
-            | ((item.nmi & 1) << 8)
-            | ((item.debug_req & 1) << 9)
-        )
-        ok = await self.cmd(
-            self.CMD_STEP,
-            a0=item.pc,
-            a1=item.rd_wdata,
-            a2=a2,
-            a3=item.pre_mip,
-            a4=item.post_mip,
-            a5=item.mcycle & 0xFFFFFFFF,
-            a6=(item.mcycle >> 32) & 0xFFFFFFFF,
+        ok = await self.cosim.step(
+            pc=item.pc,
+            rd_wdata=item.rd_wdata,
+            rd_addr=item.rd_addr,
+            rf_wr_suppress=item.rf_wr_suppress,
+            trap=item.trap,
+            nmi_int=item.nmi_int,
+            nmi=item.nmi,
+            debug_req=item.debug_req,
+            pre_mip=item.pre_mip,
+            post_mip=item.post_mip,
+            mcycle=item.mcycle,
         )
         if not ok:
-            num_errors = await self.cmd(self.CMD_GET_ERRORS)
-            details = ""
-            if item.trap:
-                dump = decode_crash_dump(item.crash_dump)
-                details = (" (exception_pc=0x{:08x}, "
-                           "exception_addr=0x{:08x})").format(
-                    dump["exception_pc"], dump["exception_addr"])
-            raise ScoreboardError(
-                "cosim mismatch at order={} pc=0x{:08x} (insn=0x{:08x}, "
-                "trap={}, {}{} error(s), see sim log)".format(
-                    item.order, item.pc, item.insn, item.trap, num_errors,
-                    details)
+            errors = await self._collect_errors()
+            crash_dump = (
+                decode_crash_dump(item.crash_dump) if item.trap else None
             )
+            raise CosimMismatchError(order=item.order, pc=item.pc,
+                                     insn=item.insn, trap=item.trap,
+                                     errors=errors, crash_dump=crash_dump)
 
-    async def notify_dside(self, access: DsideAccess):
-        """Tell the co-simulator about a data-side access seen on the memory
-        interface, once its response has been observed (mirrors
-        ``riscv_cosim_notify_dside_access`` in the UVM scoreboard).
+    async def _collect_errors(self):
+        """Fetch the comparison error strings for the mismatch report, then
+        drain (print and clear) them so the sim log keeps the full list."""
+        errors = []
+        for index in range(MAX_MISMATCH_ERRORS):
+            message = await self.cosim.error_str(index)
+            if not message:
+                break
+            errors.append(message)
+        drained = await self.cosim.drain_errors()
+        if drained > len(errors):
+            errors.append("{} more error(s), see the sim log".format(
+                drained - len(errors)))
+        return errors
 
-        The error/misaligned/m_mode flags come from the LSU probes the tb
-        latches at the (request && grant) address phase; the memory agent
-        carries them in the DsideAccess.
+    async def drain(self, timeout_ns: int) -> None:
+        """Wait until every item retired up to this call has been processed.
+
+        The tests call this after the program reports its result; the
+        trailing instructions of the program's infinite end loop keep
+        retiring, so this drains to a snapshot of
+        ``monitor.retired_count`` taken here rather than to queue
+        emptiness. Raises the stored error (a structured mismatch or a
+        transport failure) when the scoreboard died, and TimeoutError when
+        it does not catch up in time.
         """
-        # CMD_NOTIFY_DSIDE argument packing (authoritative here; the tb
-        # decodes it with the DSIDE_* constants):
-        #   cmd_a0 : addr, cmd_a1 : data, cmd_a2 : byte enables,
-        #   cmd_a3 : {26'b0, m_mode_access, misaligned_first_saw_error,
-        #             misaligned_second, misaligned_first, error, store}
-        a3 = ((1 if access.store else 0)
-              | ((1 if access.error else 0) << 1)
-              | ((1 if access.misaligned_first else 0) << 2)
-              | ((1 if access.misaligned_second else 0) << 3)
-              | ((1 if access.misaligned_first_saw_error else 0) << 4)
-              | ((1 if access.m_mode_access else 0) << 5))
-        await self.cmd(self.CMD_NOTIFY_DSIDE, a0=access.addr, a1=access.data,
-                       a2=access.be, a3=a3)
+        target = self.monitor.retired_count
+        while True:
+            if self.processed >= target:
+                return
+            if self.error is not None:
+                raise self.error
+            self._progress.clear()
+            # Re-check after the clear: an increment between the check above
+            # and the clear would otherwise be lost and the wait could block
+            # forever.
+            if self.processed >= target:
+                return
+            if self.error is not None:
+                raise self.error
+            await First(self._progress.wait(), Timer(timeout_ns, unit="ns"))
+            if not self._progress.is_set():
+                raise TimeoutError(
+                    "scoreboard did not catch up: processed {}, retired {} "
+                    "(no progress for {} ns)".format(
+                        self.processed, target, timeout_ns))
 
     async def finish(self) -> int:
-        insn_cnt = await self.cmd(self.CMD_GET_INSN_CNT)
-        await self.cmd(self.CMD_RELEASE)
+        insn_cnt = await self.cosim.get_insn_cnt()
+        drained = await self.cosim.drain_errors()
+        if drained:
+            logger.warning("%d undrained cosim error(s) at release", drained)
+        await self.cosim.release()
         logger.info("SpikeCosim released after %d matched instructions",
                     insn_cnt)
         return insn_cnt

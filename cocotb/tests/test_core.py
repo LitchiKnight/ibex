@@ -24,8 +24,15 @@ py/test_lib.run_ibex_test:
   IRQ agent on; the NMI line stays off on this tb (WritebackStage=0, see
   py/irq_agent.py).
 - ``test_error``: the dedicated error test, which loads from a poisoned
-  address and expects the load access fault. The poisoned address always
-  receives an error response from the memory agent.
+  address and expects the load access fault. The poisoned address has one
+  definition (the Makefile's IBEX_ERROR_ADDR): it is compiled into the
+  program as -DERROR_ADDR and passed to the memory agent through the
+  +ibex_cocotb_error_addrs plusarg, so this test declares no knobs.
+- ``test_random``: the generated random instruction program
+  (gen/instr_gen.py, M3). The program self-checks its trap count and the
+  handshake result; it runs with every agent off (the stream holds
+  mstatus.MIE clear and takes only its deliberately injected illegal
+  instructions).
 """
 
 import logging
@@ -60,5 +67,9 @@ async def test_irq(dut):
 
 @cocotb.test()
 async def test_error(dut):
-    await run_ibex_test(dut, replace(IbexCocotbConfig(),
-                                     error_addrs=(0xDEAD0000,)))
+    await run_ibex_test(dut)
+
+
+@cocotb.test()
+async def test_random(dut):
+    await run_ibex_test(dut)

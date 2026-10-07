@@ -11,13 +11,18 @@
 #   0x100  trap handler (mtvec base, set by reset_vector)
 #   0x200  reset_vector
 #
-# The memory agent is configured (by the test) to answer every access to
-# ERROR_ADDR with a bus error, and the co-simulator's sparse memory leaves
-# that address unmapped, so both the DUT and Spike take a load access
-# fault. The test loads from ERROR_ADDR, expects the trap with
-# mcause == CAUSE_LOAD_ACCESS_FAULT and mepc == the faulting lw, skips the
-# faulting instruction in the handler, and checks afterwards that the trap
-# was actually taken and that the faulted load did not write its register.
+# The memory agent answers every access to ERROR_ADDR with a bus error,
+# and the co-simulator's sparse memory leaves that address unmapped, so
+# both the DUT and Spike take a load access fault. The test loads from
+# ERROR_ADDR, expects the trap with mcause == CAUSE_LOAD_ACCESS_FAULT and
+# mepc == the faulting lw, skips the faulting instruction in the handler,
+# and checks afterwards that the trap was actually taken and that the
+# faulted load did not write its register.
+#
+# ERROR_ADDR has one definition: the Makefile's IBEX_ERROR_ADDR variable,
+# passed to this file as -DERROR_ADDR and to the memory agent through the
+# +ibex_cocotb_error_addrs plusarg (see py/tb_env.py). The fallback below
+# only keeps a standalone build working.
 #
 # The irq agent is off for this test (no interrupts at all), so the trap
 # handler does not need to be re-entrant.
@@ -28,7 +33,9 @@
 
 #define SIGNATURE_ADDR 0x8ffffff8
 #define TOHOST_ADDR    0x80001000
+#ifndef ERROR_ADDR
 #define ERROR_ADDR     0xdead0000
+#endif
 #define CAUSE_LOAD_ACCESS_FAULT 5
 
   .section .text.init
@@ -100,8 +107,11 @@ done:
   j done
 
 fail:
+  # 3, not 1: the environment classifies a tohost write of 1 as pass (the
+  # vendored ecall/scall convention), so a dedicated test's generic
+  # failure must be a different odd value.
   li s0, TOHOST_ADDR
-  li s1, 1
+  li s1, 3
   sw s1, 0(s0)
   j done
 

@@ -21,6 +21,8 @@ from pathlib import Path
 import cocotb
 from cocotb.triggers import RisingEdge, Timer
 
+from cosim import Cosim
+from cosim_channel import CosimChannel
 from env import IbexCocotbConfig
 from irq_agent import IbexIrqAgent, IrqAgentConfig
 from mem_agent import IbexMemAgent, MemAgentConfig, TestHandshake
@@ -57,6 +59,19 @@ def _zero_delay_pct():
     return 100 if cocotb.plusargs["ibex_cocotb_zero_delays"] != "0" else 0
 
 
+def _error_addrs(cfg: IbexCocotbConfig):
+    """Poisoned addresses for the memory agent: the test-declared set plus
+    the ``+ibex_cocotb_error_addrs`` plusarg. The Makefile passes the
+    dedicated error test's poisoned address through that plusarg (plain
+    hexadecimal, comma-separated) so the value and the -DERROR_ADDR the
+    test is compiled with share one definition (the Makefile variable)."""
+    addrs = list(cfg.error_addrs)
+    plusarg = cocotb.plusargs.get("ibex_cocotb_error_addrs")
+    if plusarg:
+        addrs.extend(int(token, 16) for token in plusarg.split(","))
+    return tuple(addrs)
+
+
 def _resolve_mem_cfg(cfg: IbexCocotbConfig, dut) -> MemAgentConfig:
     """Derive the memory agent configuration from the test-declared knobs
     and the plusargs.
@@ -74,7 +89,7 @@ def _resolve_mem_cfg(cfg: IbexCocotbConfig, dut) -> MemAgentConfig:
         spurious = False
     return MemAgentConfig(enable_spurious_response=spurious,
                           zero_delay_pct=_zero_delay_pct(),
-                          error_addrs=cfg.error_addrs)
+                          error_addrs=_error_addrs(cfg))
 
 
 def _resolve_irq_cfg(cfg: IbexCocotbConfig) -> IrqAgentConfig:
@@ -123,14 +138,18 @@ async def bring_up(dut, cfg: IbexCocotbConfig, bin_path, load_addr: int) -> Env:
     await RisingEdge(dut.clk_o)
 
     # Assemble the environment completely, then start everything at once.
+    # The command channel is shared: the scoreboard steps and the memory
+    # agent's access notifications are serialised by the channel's lock.
+    channel = CosimChannel(dut)
+    cosim = Cosim(channel)
     monitor = RVFIMonitor(dut)
-    scoreboard = Scoreboard(dut, monitor)
+    scoreboard = Scoreboard(cosim, monitor)
     handshake = TestHandshake(cfg.signature_addr, cfg.tohost_addr)
     mem = IbexMemAgent(dut, _resolve_mem_cfg(cfg, dut), handshake,
-                       on_access=scoreboard.notify_dside)
+                       on_access=cosim.notify_dside)
     irq = IbexIrqAgent(dut, _resolve_irq_cfg(cfg))
 
-    await scoreboard.init_cosim()
+    await cosim.init_cosim()
     mem.load_bin(Path(bin_path), load_addr)
 
     for component in (mem, irq, monitor, scoreboard):

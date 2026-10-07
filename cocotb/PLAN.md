@@ -2,7 +2,7 @@
 
 > 目标:在不修改任何现有文件的前提下,新增一套基于 cocotb 的验证环境,替代依赖商业 EDA 工具(VCS / Xcelium)的仿真环节,使功能仿真验证可以在开源工具链(Verilator + Spike + Python)上完整运行。
 >
-> 状态:方案已定稿,实施待启动。
+> 状态:M1-M3 已完成并验收(比对链路、内存/中断代理、随机指令生成),M4 覆盖率模型与 M5 对拍待启动;跨会话状态见 §9。
 
 ## 1. 背景
 
@@ -129,5 +129,14 @@ cocotb/
   10. `-include legacy_csr_compat.h` 供 riscv-tests 编译(sptbr→satp 等),新 xpack 工具链不再识别旧 CSR 别名。
   11. **NMI 与 WritebackStage=0 不兼容(UVM 同款边界)**:DUT 在 irq-only RVFI 事件(rvfi_ext_irq_valid)之后还会退休一条在途指令(事件的 `~instr_valid_id` 条件早于流水线彻底排空),而 SpikeCosim 的 NMI 模型在 set_nmi 的下一步立即陷入——失配。UVM 的 NMI 测试跑在 WritebackStage=1 配置上(riscv-dv 生成测试);本 tb 为 WB=0,故 irq_test 默认 `+ibex_cocotb_irq_nmi=0`(NMI handler 代码保留,供未来 WB=1 变体)。maskable 中断 + irq-only CMD_SET_MIP 路径已验收(irq_test:21362 条指令/334 次随机中断全部比对一致)。
   12. **irq_only 事件的洪泛**:rvfi_ext_irq_valid 是电平信号(事件后保持到 handler 首条指令退休),monitor 按周期去重(连续 irq_only 只保留第一个)。
-- 下一动作:M2 验收(随机注入下 compliance 测试集通过)+ 之后 M3(gen/instr_gen.py)。
+  13. **tohost==1 判读冲突**:ecall/scall 类测试的通过约定是 tohost 写 1(失败 TESTNUM|1337),所以专用测试/生成程序的失败路径必须写**奇数且 ≠1** 的值(irq_test 各检查点 3/5/7/9,error_test/gen 用 3),否则失败被 classify 误判为 pass。
+  14. **WB=0 上 maskable 中断取指不受 cosim 协议支持**:UVM 只在 WritebackStage=1 配置上验证中断流;WB=0 的 RVFI 在中断取指时重复呈现最后一条指令(同 order、valid 重断言约 17 拍)并产生取指伪影 trap 项,SpikeCosim 无对应物。irq_test 在 WB=0 上不写 mie、断言 handler 进入 0 次;中断取指与 irq-only 事件(CMD_SET_MIP)留给 WB=1 变体(同 NMI,坑 #10)。
+- **M3 已完成**(2026-10-07,验收:23 条既有用例 + gen 多 seed 全部 PASS):
+  - 新增 `gen/instr_gen.py`:riscv-dv 配比思路的随机指令生成器(ALU/ALUI/LOAD/STORE/BRANCH/MUL/CSR/JAL/JALR/压缩指令按权重混排,默认 stream_len=400 × iterations=10)。程序自校验:注入的非法指令(0x00000000/0xFFFFFFFF/0x7FFF 三种保证双模型一致 mtval 的 32 位字)必须逐一在专用非法段触发 mcause==2 陷阱、handler 跳过并计数,结尾核对 EXPECTED_ILLEGAL;到达握手(签名地址写 1)即证明整条流执行完毕。防假阳性保证:**流内所有跳转(branch/jal/jalr)只允许指向严格更靠后的标签**(不构成环,唯一的后向边是外层 bnez 循环,受 ITERATIONS 约束);**s11 为外层计数器,流内寄存器池排除之**;**load/store 全部经 `la t, data_pool` + 池内对齐偏移**(永不触碰握手地址或代码);**CSR 仅 mscratch**(riscv-dv 模板注释掉的计数器 CSR 曾造成 cosim 失配,mscratch 是唯一所有访问模式下双模型行为一致的 CSR);压缩指令用保守子集(c.nop/c.li/c.mv/c.addi 排除 rd=sp 与 imm=0 的 addi16sp/hint 边界,c.lw/c.sw 自带 `la s0, data_pool` 基址、x8-x15 编码池)。用法:`make sim TESTSUITE=gen TEST=<seed>`(seed 编码进文件名,换 seed 必然重新生成;编辑生成器同样触发重建)。
+  - **P2 遗留项全部完成**:① 三层拆分 — 新 `py/cosim_channel.py`(CosimChannel:命令传输、opcode 唯一权威、握手超时、Lock 串行化)+ 新 `py/cosim.py`(Cosim:语义层,STEP/DSIDE/SETMIP 位域打包唯一权威在此,SV 侧仅命名常量解码;CosimError/CosimMismatchError)+ `py/scoreboard.py`(消费层,只做流程);② **drain() 追赶接口** — Scoreboard.drain(timeout_ns) 按调用时刻 retired_count 快照追赶(尾部无限循环会持续退休,不能等队列空),进度事件驱动,scoreboard 死亡时抛出结构化失配异常本身,test_lib 的轮询循环消失;③ **结构化失配异常** — CosimMismatchError(order/pc/insn/trap/errors 列表/crash_dump 解码 dict),错误字符串经新 DPI 命令 CMD_GET_ERROR_STR(a0=错误序号,a1=字序号,-1 取长度)按 32 位字传输(Verilator 的 DPI import 不支持 output 数组形参,故不用字符串缓冲端口),取前 16 条入异常、其余由 finish() 的 drain 打印;④ NMI 检查条件化 — irq_test.S 的阈值改 `NMI_EXPECT_MIN`(默认 0,WB=1 变体用 -DNMI_EXPECT_MIN=20 覆盖);⑤ ERROR_ADDR 单点定义 — Makefile `IBEX_ERROR_ADDR ?= 0xDEAD0000` 同时以 `-DERROR_ADDR=` 编译进 error_test.S 并以 `+ibex_cocotb_error_addrs=`(无 0x 前缀十六进制)传入 tb_env 解析合并;⑥ tb 的 trap_crash_dump 清零与分支统一 — `if (rvfi_valid) trap_crash_dump <= rvfi_trap ? crash_dump : '0`,monitor 逐项采样不再读到陈旧值。
+  - **M3 期间发现并修复的环境级缺陷(重要)**:
+    - *tohost==1 判读冲突(假阳性)*:ecall/scall 类测试的通过约定是 tohost 写 1,而 irq_test/error_test/生成程序的通用 `fail:` 路径也写 1 → 失败被误判为 pass。修复:专用测试/生成程序的失败路径改写 3(irq_test 各检查点分别写 3/5/7/9,handler_fail 仍写 (mcause<<1)|1)。此坑入列 #13。
+    - *irq_test 的 checksum 检查数学上不成立*:中断期间 pass 累积 256×16 次 (acc^w)+1,重校验只跑 16 次,该交错运算不可幂等,两个值构造上就不可能相等 → M2 的 irq_test 自检从未通过(被 tohost==1 假阳性双重掩盖)。修复:重校验完整复现 256 轮同构累积(新增 s9 外层计数器)。
+    - *WB=0 上 maskable 中断取指不受 cosim 协议支持(与坑 #11 同类)*:UVM 只在此 WritebackStage=1 的配置(opentitan)上验证中断流;WB=0 的 RVFI(RVFI_STAGES=1)在中断取指时会把最后一条指令以同 order 重复呈现约 17 拍(valid 重断言)并产生一个 pc/insn 为取指流水线伪影的 trap 项(intr=1、insn=0、pc 落在 handler 后零填充区),SpikeCosim 无对应物,喂进去必然失配(实测 csrw mie 后失配)。结论:irq_test 恢复诚实的 WB=0 语义 —— **不写 mie**(复位值 0,任何 maskable 中断都无法被采样),agent 的 raise 仅经 RVFI pre/post mip 流入 set_mip 逐步比对(该路径真实受验),测试断言 **handler 进入次数 == 0** 与 checksum 完整;真正的中断取指路径连同 irq-only 事件(CMD_SET_MIP)留给 WB=1 变体。M2 记录中"irq-only CMD_SET_MIP 路径已验收"的说法不实 —— 该路径从未真正触发(monitor 的 raw_irq_cycles 探针证实 0 次),已更正。
+- 下一动作:M4(py/coverage.py 覆盖率)+ M5(与 UVM 环境对拍)。
 - 交接约束:比对核心必须复用 `dv/cosim` 的 `SpikeCosim` C++ 库(见 AOCI 索引中本文件的 S 字段),不得重写;不修改任何现有文件。

@@ -2,14 +2,14 @@
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
 
-# Ibex cocotb verification environment: M2 milestone (see cocotb/PLAN.md).
+# Ibex cocotb verification environment: M3 milestone (see cocotb/PLAN.md).
 #
 # Builds the DUT + the unchanged dv/cosim SpikeCosim comparison core with
-# Verilator, compiles a vendored riscv-tests test (or a dedicated cocotb
-# directed test) with the RISC-V GCC toolchain, and runs the cocotb
-# testbench with per-instruction retirement checking against Spike. The
-# M2 runs enable the randomised memory/IRQ agents by default (see the
-# IBEX_COCOTB_* plusargs below).
+# Verilator, compiles a vendored riscv-tests test, a dedicated cocotb
+# directed test or a generated random instruction program with the RISC-V
+# GCC toolchain, and runs the cocotb testbench with per-instruction
+# retirement checking against Spike. The M2/M3 runs enable the randomised
+# memory/IRQ agents by default (see the IBEX_COCOTB_* plusargs below).
 #
 # No existing repository file is modified: the RTL, the dv/cosim checker and
 # the directed-test linker script/macros are all consumed in place.
@@ -19,6 +19,7 @@
 #   make sim TESTSUITE=rv32mi TEST=mcsr
 #   make sim TESTSUITE=sw TEST=irq_test
 #   make sim TESTSUITE=sw TEST=error_test
+#   make sim TESTSUITE=gen TEST=1    # random program, TEST is the seed
 #   make build_test TEST=addi        # only build the test binary
 
 IBEX_ROOT  ?= $(abspath ..)
@@ -42,9 +43,19 @@ COCOTB_HDL_TIMEPRECISION = 1ps
 # TESTSUITE selects the program source and the cocotb test function:
 #   rv32ui/rv32mi  vendored riscv-tests isa suites
 #   sw             dedicated cocotb directed tests (tests/sw/*.S)
+#   gen            generated random programs (gen/instr_gen.py, TEST=seed)
 TESTSUITE ?= rv32ui
 TEST ?= addi
 OUT_DIR ?= out
+
+# The poisoned address for the dedicated error test. This is its single
+# definition: it is compiled into the program (-DERROR_ADDR) and passed to
+# the memory agent (+ibex_cocotb_error_addrs, consumed by py/tb_env.py).
+IBEX_ERROR_ADDR ?= 0xDEAD0000
+
+# Extra cocotb plusargs appended by a TESTSUITE branch (e.g. the error
+# test's poisoned address); IBEX_COCOTB_OPTS remains the user override.
+EXTRA_PLUSARGS ?=
 
 ifeq ($(TESTSUITE),rv32ui)
   TESTCASE := test_rv32ui
@@ -69,12 +80,27 @@ else ifeq ($(TESTSUITE),sw)
     TESTCASE := test_irq
   else ifeq ($(TEST),error_test)
     TESTCASE := test_error
+    # IBEX_ERROR_ADDR is the single definition of the poisoned address
+    # (see above): compile it into the program and pass it to the memory
+    # agent through the plusarg (plain hex, parsed by py/tb_env.py).
+    SW_TEST_INC := -DERROR_ADDR=$(IBEX_ERROR_ADDR)
+    EXTRA_PLUSARGS := +ibex_cocotb_error_addrs=$(subst 0x,,$(IBEX_ERROR_ADDR))
   else
     $(error unknown sw test '$(TEST)')
   endif
+else ifeq ($(TESTSUITE),gen)
+  TESTCASE := test_random
+  SW_TEST_SRC := $(OUT_DIR)/gen_$(TEST).S
+  SW_TEST_INC :=
 else
   $(error unknown TESTSUITE '$(TESTSUITE)')
 endif
+
+# Random instruction programs (M3, see gen/instr_gen.py): the source is
+# generated per seed (TEST is the seed, encoded in the file name, so a new
+# seed always regenerates; editing the generator also rebuilds it).
+$(OUT_DIR)/gen_%.S: gen/instr_gen.py | $(OUT_DIR)
+	python3 gen/instr_gen.py --seed $* --out $@
 
 BIN := $(OUT_DIR)/$(TESTSUITE)_$(TEST).bin
 
@@ -130,7 +156,7 @@ COMPILE_ARGS = \
 # Runtime plusargs consumed by tb/ibex_cocotb_tb.sv (CMD_INIT) to load the
 # binary into the co-simulator, by the Python test for its own copy of the
 # image base address, and by py/tb_env.py for the agent knobs.
-COCOTB_PLUSARGS = +ibex_cocotb_bin=$(BIN) +ibex_cocotb_load_addr=$(IBEX_LOAD_ADDR) $(IBEX_COCOTB_OPTS)
+COCOTB_PLUSARGS = +ibex_cocotb_bin=$(BIN) +ibex_cocotb_load_addr=$(IBEX_LOAD_ADDR) $(EXTRA_PLUSARGS) $(IBEX_COCOTB_OPTS)
 
 # Environment for the Python testbench.
 export IBEX_COCOTB_BIN = $(BIN)

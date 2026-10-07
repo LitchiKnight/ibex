@@ -18,7 +18,6 @@ import os
 from pathlib import Path
 
 import cocotb
-from cocotb.triggers import RisingEdge
 
 from env import IbexCocotbConfig
 from tb_env import bring_up
@@ -30,11 +29,10 @@ logger = logging.getLogger("cocotb.test")
 # write; five million nanoseconds at a 10ns period leaves plenty of margin
 # for the randomised memory timing and the IRQ agent's idle gaps.
 RESULT_WRITE_TIMEOUT_NS = 5_000_000
-# Number of clock cycles allowed for the scoreboard to catch up with the
-# RVFI monitor after the test has reported its result. Randomised delays
-# stretch each access, and the queue can hold a few hundred items, so a
-# generous margin is used.
-CATCHUP_CYCLES = 50_000
+# Upper bound for the scoreboard's catch-up drain: how long one wait may go
+# without any progress. The drain re-arms on every processed item, so this
+# is a stall bound, not a total budget (see scoreboard.Scoreboard.drain).
+DRAIN_STALL_TIMEOUT_NS = 1_000_000
 
 
 def load_addr_from_plusargs():
@@ -69,22 +67,12 @@ async def run_ibex_test(dut, cfg=None):
 
     result = await mem.wait_for_result(RESULT_WRITE_TIMEOUT_NS)
 
-    # Let the scoreboard catch up with everything retired so far. If the
-    # scoreboard already died, stop polling: the assertion below must report
-    # the real error instead of a misleading "did not catch up".
-    caught_up = False
-    for _ in range(CATCHUP_CYCLES):
-        await RisingEdge(dut.clk_o)
-        if scoreboard.error is not None:
-            break
-        if scoreboard.processed >= monitor.retired_count:
-            caught_up = True
-            break
+    # Let the scoreboard catch up with everything retired so far; drain()
+    # raises the scoreboard's stored error (a structured mismatch or a
+    # transport failure) instead of polling its counters here.
+    await scoreboard.drain(DRAIN_STALL_TIMEOUT_NS)
 
     assert scoreboard.error is None, scoreboard.error
-    assert caught_up, (
-        "scoreboard did not catch up: processed {}, retired {}".format(
-            scoreboard.processed, monitor.retired_count))
     assert monitor.retired_count > 0, "no instructions retired"
     assert monitor.order_gap is None, (
         "RVFI order jumped {} -> {}: every later comparison is "
@@ -92,12 +80,13 @@ async def run_ibex_test(dut, cfg=None):
 
     matched = await scoreboard.finish()
     logger.info("result=%s, retired %d instructions, matched %d, "
-                "%d loads, %d stores, %d spurious responses, %d errors, "
-                "%d irq raises, %d irq-only events",
-                result, monitor.retired_count, matched,
+                "%d traps, %d loads, %d stores, %d spurious responses, "
+                "%d errors, %d irq raises, %d irq-only events, "
+                "%d raw irq cycles",
+                result, monitor.retired_count, matched, monitor.trap_count,
                 mem.load_count, mem.store_count, mem.spurious_count,
                 mem.error_count, env.irq.raise_count,
-                monitor.irq_only_count)
+                monitor.irq_only_count, monitor.raw_irq_cycles)
 
     # The program reported a pass and every compared instruction matched
     # the co-simulator. The matched count may lag the retired count by one

@@ -4,3 +4,4 @@ sim_build/
 results.xml
 __pycache__/
 *.pyc
+spike_cosim.log

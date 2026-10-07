@@ -188,17 +188,18 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
   $fatal("Fatal error: RVFI needs to be defined globally.");
 `endif
 
-  // Command opcodes (keep in sync with cocotb/py/scoreboard.py).
-  localparam logic [7:0] CMD_INIT         = 8'h00;
-  localparam logic [7:0] CMD_STEP         = 8'h01;
-  localparam logic [7:0] CMD_GET_ERRORS   = 8'h02;
-  localparam logic [7:0] CMD_GET_INSN_CNT = 8'h03;
-  localparam logic [7:0] CMD_RELEASE      = 8'h04;
-  localparam logic [7:0] CMD_NOTIFY_DSIDE = 8'h05;
-  localparam logic [7:0] CMD_SET_MIP      = 8'h06;
+  // Command opcodes (keep in sync with cocotb/py/cosim_channel.py).
+  localparam logic [7:0] CMD_INIT          = 8'h00;
+  localparam logic [7:0] CMD_STEP          = 8'h01;
+  localparam logic [7:0] CMD_GET_ERRORS    = 8'h02;
+  localparam logic [7:0] CMD_GET_INSN_CNT  = 8'h03;
+  localparam logic [7:0] CMD_RELEASE       = 8'h04;
+  localparam logic [7:0] CMD_NOTIFY_DSIDE  = 8'h05;
+  localparam logic [7:0] CMD_SET_MIP       = 8'h06;
+  localparam logic [7:0] CMD_GET_ERROR_STR = 8'h07;
 
   // Bit positions of the packed CMD_STEP / CMD_NOTIFY_DSIDE arguments. The
-  // authoritative definition of the packing lives in cocotb/py/scoreboard.py,
+  // authoritative definition of the packing lives in cocotb/py/cosim.py,
   // which is the only writer of these registers; this side only decodes it.
   localparam int STEP_RD_ADDR_LSB        = 0;
   localparam int STEP_RF_WR_SUPPRESS_BIT = 5;
@@ -230,6 +231,8 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
     int unsigned dm_end_addr);
   import "DPI-C" function int ibex_cocotb_drain_errors(chandle cosim_handle);
   import "DPI-C" function int unsigned ibex_cocotb_get_insn_cnt(chandle cosim_handle);
+  import "DPI-C" function int ibex_cocotb_get_error_str(chandle cosim_handle,
+                                                        int index, int word);
 
   logic clk;
   crash_dump_t crash_dump;
@@ -280,13 +283,16 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
   end
 
 `ifdef RVFI
-  // Latch the core's crash dump on the cycle a trap retires, for Python
-  // side inspection (exception_pc = mepc, exception_addr = mtval).
+  // Hold the core's crash dump while a trap retires and clear it while any
+  // other instruction retires, for Python-side inspection (exception_pc =
+  // mepc, exception_addr = mtval). The monitor samples this register with
+  // every RVFI item, so the value is meaningful exactly when rvfi_trap is
+  // set on the sampled item - never stale from an earlier trap.
   always_ff @(posedge clk or negedge rst_ni) begin
     if (!rst_ni) begin
       trap_crash_dump <= '0;
-    end else if (rvfi_valid && rvfi_trap) begin
-      trap_crash_dump <= crash_dump;
+    end else if (rvfi_valid) begin
+      trap_crash_dump <= rvfi_trap ? crash_dump : '0;
     end
   end
 `endif
@@ -356,6 +362,15 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
             riscv_cosim_set_nmi_int(cosim_handle, cmd_a2[SETMIP_NMI_INT_BIT]);
             riscv_cosim_set_mip(cosim_handle, cmd_a3, cmd_a3);
             cmd_ret0 <= 32'h1;
+          end
+          CMD_GET_ERROR_STR: begin
+            // Indexed comparison error string, transferred 32 bits at a
+            // time: a0 is the error index, a1 the word index (byte i at
+            // bits [8*(i%4)+7:8*(i%4)] of word i/4), or 0xFFFFFFFF for the
+            // string length. An out-of-range index returns 0; the error
+            // list is left untouched.
+            cmd_ret0 <= ibex_cocotb_get_error_str(cosim_handle, cmd_a0,
+                                                  cmd_a1);
           end
           default: begin
             $error("ibex_cocotb: unknown cmd op 0x%0x", cmd_op);

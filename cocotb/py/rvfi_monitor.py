@@ -69,7 +69,13 @@ class RVFIMonitor:
         self.dut = dut
         self._queue = Queue()
         self.retired_count = 0
+        self.trap_count = 0
         self.irq_only_count = 0
+        # Cycles where rvfi_ext_irq_valid was high without a retirement
+        # (before edge detection). On the WritebackStage=0 tb no interrupt
+        # take is exercised, so this stays 0; it documents the dormant
+        # irq-only path (see PLAN.md section 9).
+        self.raw_irq_cycles = 0
         # (previous_order, jumped_order) of the first RVFI order gap. A gap
         # means a sampling error, which is exactly the kind of bug that
         # otherwise surfaces as baffling cosim mismatches; the tests treat
@@ -89,6 +95,8 @@ class RVFIMonitor:
             # this independent of that RTL behaviour; the previous level
             # is tracked every cycle, empty ones included, so a level that
             # drops and rises again is a new event.
+            if irq_event and not valid:
+                self.raw_irq_cycles += 1
             irq_only = irq_event and not valid and not self._prev_irq_event
             self._prev_irq_event = irq_event
             if not (valid or irq_event):
@@ -131,6 +139,8 @@ class RVFIMonitor:
                         self.order_gap = (self._prev_order, item.order)
                 self._prev_order = item.order
                 self.retired_count += 1
+                if item.trap:
+                    self.trap_count += 1
             else:
                 self.irq_only_count += 1
 
