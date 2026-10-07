@@ -9,6 +9,9 @@ co-simulator construction parameters (ISA string, PMP, ICache, debug module
 range, ...) live in ``tb/ibex_cocotb_tb.sv``, which is their single
 authority, and the image load base address is passed by the Makefile
 through the ``+ibex_cocotb_load_addr`` plusarg.
+
+The agent randomisation knobs are runtime plusargs too (``bring_up`` reads
+them); the defaults below match the UVM agents.
 """
 
 from dataclasses import dataclass
@@ -24,3 +27,16 @@ class IbexCocotbConfig:
     # The interpretation itself lives in mem_agent.classify_test_result.
     signature_addr: int = 0x8FFFFFF8
     tohost_addr: int = 0x80001000
+    # Memory agent knobs (UVM ibex_mem_intf_response_agent_cfg defaults;
+    # overridable through the +ibex_cocotb_spurious_resp and
+    # +ibex_cocotb_zero_delays plusargs).
+    spurious_response: bool = False
+    zero_delays: bool = False
+    # IRQ agent knobs (overridable through the +ibex_cocotb_irq and
+    # +ibex_cocotb_irq_nmi plusargs).
+    irq_enable: bool = False
+    irq_nmi_enable: bool = False
+    # Poisoned address used by the dedicated error test: accesses to it
+    # always receive an error response (unmapped in the co-simulator's
+    # memory, so Spike faults on it the same way the DUT does).
+    error_addr: int = 0xDEAD0000

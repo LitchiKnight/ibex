@@ -39,6 +39,7 @@ class Scoreboard:
     CMD_GET_INSN_CNT = 3
     CMD_RELEASE = 4
     CMD_NOTIFY_DSIDE = 5
+    CMD_SET_MIP = 6
 
     def __init__(self, dut):
         self.dut = dut
@@ -115,6 +116,18 @@ class Scoreboard:
             self.done_event.set()
 
     async def step_item(self, item):
+        if item.irq_only:
+            # IRQ-only RVFI events notify the co-simulator about interrupts
+            # that fire without a retired instruction (e.g. while the
+            # pipeline is empty). Mirrors the UVM scoreboard's irq_only
+            # branch: set_nmi, set_nmi_int, set_mip(pre_mip, pre_mip) — no
+            # debug_req, no mcycle, no step.
+            #   cmd_a2 : {29'b0, nmi_int, nmi, 1'b0},
+            #   cmd_a3 : pre_mip (used for both mip arguments, as in UVM).
+            a2 = ((item.nmi & 1) << 1) | ((item.nmi_int & 1) << 2)
+            await self.cmd(self.CMD_SET_MIP, a2=a2, a3=item.pre_mip)
+            return
+
         # CMD_STEP argument packing. This is the authoritative definition of
         # the bit layout; tb/ibex_cocotb_tb.sv only decodes it through named
         # constants (STEP_*). The tb issues the DPI calls in the same order
@@ -145,8 +158,9 @@ class Scoreboard:
             num_errors = await self.cmd(self.CMD_GET_ERRORS)
             raise ScoreboardError(
                 "cosim mismatch at order={} pc=0x{:08x} (insn=0x{:08x}, "
-                "{} error(s), see sim log)".format(
-                    item.order, item.pc, item.insn, num_errors)
+                "trap={}, intr={}, {} error(s), see sim log)".format(
+                    item.order, item.pc, item.insn, item.trap, item.intr,
+                    num_errors)
             )
 
     async def notify_dside(self, access: DsideAccess):

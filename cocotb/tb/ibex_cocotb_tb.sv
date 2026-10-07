@@ -45,7 +45,7 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
   parameter bit           ICacheECC                = 1'b0,
   parameter bit           ICacheTweakInfection     = 1'b0,
   parameter bit           BranchPredictor          = 1'b0,
-  parameter bit           DbgTriggerEn             = 1'b0,
+  parameter bit           DbgTriggerEn             = 1'b1,
   parameter int unsigned  DbgHwBreakNum            = 1,
   parameter bit           SecureIbex               = 1'b0,
   parameter int unsigned  LockstepOffset           = 1,
@@ -108,6 +108,28 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
   output logic        alert_major_internal_o,
   output logic        alert_major_bus_o,
   output logic        double_fault_seen_o,
+
+  // Crash dump captured on the cycle a trap retires on RVFI. Lets the
+  // Python side report exception_pc/exception_addr (mtval) for cosim
+  // mismatch debugging; the value is only meaningful after rvfi_trap.
+  output logic [159:0] trap_crash_dump,
+
+  // Constant copy of the SecureIbex DUT parameter. The memory agent uses it
+  // to apply the same rule as the UVM base test: spurious responses are
+  // only allowed on secure configurations, whose core gates stray bus
+  // responses (ibex_core.sv g_check_mem_response); with SecureIbex=0 the
+  // core trusts the bus protocol and a spurious response would corrupt it.
+  output logic        secure_ibex_o,
+
+  // Data access classification, sampled by Python at the request phase and
+  // forwarded to the co-simulator. Derived from the same LSU internals the
+  // UVM tb probes hierarchically (core_ibex_tb_top.sv): the bus-level
+  // signals alone cannot distinguish the halves of a misaligned access
+  // from aligned byte/halfword accesses.
+  output logic        data_misaligned_first_o,
+  output logic        data_misaligned_second_o,
+  output logic        data_misaligned_first_saw_error_o,
+  output logic        data_m_mode_o,
 
 `ifdef RVFI
   // RISC-V Formal Interface outputs (monitored by Python).
@@ -173,6 +195,7 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
   localparam logic [7:0] CMD_GET_INSN_CNT = 8'h03;
   localparam logic [7:0] CMD_RELEASE      = 8'h04;
   localparam logic [7:0] CMD_NOTIFY_DSIDE = 8'h05;
+  localparam logic [7:0] CMD_SET_MIP      = 8'h06;
 
   // Bit positions of the packed CMD_STEP / CMD_NOTIFY_DSIDE arguments. The
   // authoritative definition of the packing lives in cocotb/py/scoreboard.py,
@@ -191,6 +214,9 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
   localparam int DSIDE_MIS_FIRST_ERR_BIT = 4;
   localparam int DSIDE_M_MODE_BIT        = 5;
 
+  localparam int SETMIP_NMI_BIT          = 1;
+  localparam int SETMIP_NMI_INT_BIT      = 2;
+
   chandle     cosim_handle = null;
   string      bin_path     = "";
   int unsigned load_addr;
@@ -206,6 +232,7 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
   import "DPI-C" function int unsigned ibex_cocotb_get_insn_cnt(chandle cosim_handle);
 
   logic clk;
+  crash_dump_t crash_dump;
 
   initial begin
     clk = 1'b0;
@@ -213,6 +240,56 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
   end
 
   assign clk_o = clk;
+
+  assign secure_ibex_o = SecureIbex;
+
+  // The same hierarchical derivations as the UVM tb (core_ibex_tb_top.sv),
+  // probing the LSU internals, latched at the address phase: the UVM
+  // monitor samples these signals on the (request && grant) cycle, which
+  // is also when their values are architecturally meaningful. Latching
+  // them here keeps the Python side independent of its sampling skew.
+  logic data_misaligned_first_probe;
+  logic data_misaligned_second_probe;
+  logic data_misaligned_first_saw_error_probe;
+  logic data_m_mode_probe;
+
+  assign data_misaligned_first_probe =
+    u_ibex_top.u_ibex_core.load_store_unit_i.handle_misaligned_d |
+    ((u_ibex_top.u_ibex_core.load_store_unit_i.lsu_type_i == 2'b01) &
+     (u_ibex_top.u_ibex_core.load_store_unit_i.data_offset == 2'b01));
+  assign data_misaligned_second_probe =
+    u_ibex_top.u_ibex_core.load_store_unit_i.addr_incr_req_o;
+  assign data_misaligned_first_saw_error_probe =
+    u_ibex_top.u_ibex_core.load_store_unit_i.addr_incr_req_o &
+    u_ibex_top.u_ibex_core.load_store_unit_i.lsu_err_d;
+  assign data_m_mode_probe =
+    u_ibex_top.u_ibex_core.priv_mode_lsu == ibex_pkg::PRIV_LVL_M;
+
+  always_ff @(posedge clk or negedge rst_ni) begin
+    if (!rst_ni) begin
+      data_misaligned_first_o           <= 1'b0;
+      data_misaligned_second_o          <= 1'b0;
+      data_misaligned_first_saw_error_o <= 1'b0;
+      data_m_mode_o                     <= 1'b0;
+    end else if (data_req_o && data_gnt_i) begin
+      data_misaligned_first_o           <= data_misaligned_first_probe;
+      data_misaligned_second_o          <= data_misaligned_second_probe;
+      data_misaligned_first_saw_error_o <= data_misaligned_first_saw_error_probe;
+      data_m_mode_o                     <= data_m_mode_probe;
+    end
+  end
+
+`ifdef RVFI
+  // Latch the core's crash dump on the cycle a trap retires, for Python
+  // side inspection (exception_pc = mepc, exception_addr = mtval).
+  always_ff @(posedge clk or negedge rst_ni) begin
+    if (!rst_ni) begin
+      trap_crash_dump <= '0;
+    end else if (rvfi_valid && rvfi_trap) begin
+      trap_crash_dump <= crash_dump;
+    end
+  end
+`endif
 
   // Execute one command per request; ack is held until Python drops cmd_valid.
   always_ff @(posedge clk or negedge rst_ni) begin
@@ -269,6 +346,15 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
               cmd_a3[DSIDE_ERROR_BIT], cmd_a3[DSIDE_MIS_FIRST_BIT],
               cmd_a3[DSIDE_MIS_SECOND_BIT], cmd_a3[DSIDE_MIS_FIRST_ERR_BIT],
               cmd_a3[DSIDE_M_MODE_BIT]);
+            cmd_ret0 <= 32'h1;
+          end
+          CMD_SET_MIP: begin
+            // IRQ-only RVFI event: same call order as the UVM scoreboard's
+            // irq_only branch (set_nmi, set_nmi_int, set_mip(pre, pre), no
+            // step).
+            riscv_cosim_set_nmi(cosim_handle, cmd_a2[SETMIP_NMI_BIT]);
+            riscv_cosim_set_nmi_int(cosim_handle, cmd_a2[SETMIP_NMI_INT_BIT]);
+            riscv_cosim_set_mip(cosim_handle, cmd_a3, cmd_a3);
             cmd_ret0 <= 32'h1;
           end
           default: begin
@@ -376,7 +462,7 @@ module ibex_cocotb_tb import ibex_pkg::*; import ibex_cheriot_pkg::*; #(
     .scramble_req_o            (),
 
     .debug_req_i,
-    .crash_dump_o              (),
+    .crash_dump_o              (crash_dump),
     .double_fault_seen_o,
 
 `ifdef RVFI

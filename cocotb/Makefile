@@ -2,24 +2,29 @@
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
 
-# Ibex cocotb verification environment: M1 milestone (see cocotb/PLAN.md).
+# Ibex cocotb verification environment: M2 milestone (see cocotb/PLAN.md).
 #
 # Builds the DUT + the unchanged dv/cosim SpikeCosim comparison core with
-# Verilator, compiles a vendored riscv-tests rv32ui test with the RISC-V GCC
-# toolchain, and runs the cocotb testbench with per-instruction retirement
-# checking against Spike.
+# Verilator, compiles a vendored riscv-tests test (or a dedicated cocotb
+# directed test) with the RISC-V GCC toolchain, and runs the cocotb
+# testbench with per-instruction retirement checking against Spike. The
+# M2 runs enable the randomised memory/IRQ agents by default (see the
+# IBEX_COCOTB_* plusargs below).
 #
 # No existing repository file is modified: the RTL, the dv/cosim checker and
 # the directed-test linker script/macros are all consumed in place.
 #
 # Usage:
-#   make sim TEST=addi            # build test binary, run cocotb test
-#   make build_test TEST=addi     # only build the test binary
+#   make sim TEST=addi               # rv32ui (default suite)
+#   make sim TESTSUITE=rv32mi TEST=mcsr
+#   make sim TESTSUITE=sw TEST=irq_test
+#   make sim TESTSUITE=sw TEST=error_test
+#   make build_test TEST=addi        # only build the test binary
 
 IBEX_ROOT  ?= $(abspath ..)
 COCOTB_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
-# --- Tools (defaults assume the M1 setup described in cocotb/PLAN.md) ---
+# --- Tools (defaults assume the setup described in cocotb/PLAN.md) ---
 RISCV_GCC         ?= $(HOME)/tools/xpack/xpack-riscv-none-elf-gcc-15.2.0-1/bin/riscv-none-elf-gcc
 RISCV_OBJCOPY     ?= $(dir $(RISCV_GCC))riscv-none-elf-objcopy
 SPIKE_PREFIX      ?= $(HOME)/tools/spike
@@ -28,14 +33,76 @@ SPIKE_PREFIX      ?= $(HOME)/tools/spike
 SIM ?= verilator
 TOPLEVEL_LANG = verilog
 TOPLEVEL = ibex_cocotb_tb
-MODULE = tests.test_rv32ui
+MODULE = tests.test_core
+COCOTB_TESTCASE = $(TESTCASE)
 COCOTB_HDL_TIMEUNIT = 1ns
 COCOTB_HDL_TIMEPRECISION = 1ps
 
 # --- Test selection ---
+# TESTSUITE selects the program source and the cocotb test function:
+#   rv32ui/rv32mi  vendored riscv-tests isa suites
+#   sw             dedicated cocotb directed tests (tests/sw/*.S)
+TESTSUITE ?= rv32ui
 TEST ?= addi
 OUT_DIR ?= out
-BIN := $(OUT_DIR)/rv32ui_$(TEST).bin
+
+ifeq ($(TESTSUITE),rv32ui)
+  TESTCASE := test_rv32ui
+  SW_TEST_SRC := $(IBEX_ROOT)/vendor/riscv-tests/isa/rv32ui/$(TEST).S
+  SW_TEST_INC := -I$(IBEX_ROOT)/vendor/riscv-test-env/ \
+                 -I$(IBEX_ROOT)/vendor/riscv-test-env/p/ \
+                 -I$(IBEX_ROOT)/vendor/riscv-tests/isa/macros/scalar/ \
+                 -I$(IBEX_ROOT)/dv/uvm/core_ibex/directed_tests \
+                 -include $(COCOTB_DIR)/tests/sw/legacy_csr_compat.h
+else ifeq ($(TESTSUITE),rv32mi)
+  TESTCASE := test_rv32mi
+  SW_TEST_SRC := $(IBEX_ROOT)/vendor/riscv-tests/isa/rv32mi/$(TEST).S
+  SW_TEST_INC := -I$(IBEX_ROOT)/vendor/riscv-test-env/ \
+                 -I$(IBEX_ROOT)/vendor/riscv-test-env/p/ \
+                 -I$(IBEX_ROOT)/vendor/riscv-tests/isa/macros/scalar/ \
+                 -I$(IBEX_ROOT)/dv/uvm/core_ibex/directed_tests \
+                 -include $(COCOTB_DIR)/tests/sw/legacy_csr_compat.h
+else ifeq ($(TESTSUITE),sw)
+  SW_TEST_SRC := $(COCOTB_DIR)/tests/sw/$(TEST).S
+  SW_TEST_INC :=
+  ifeq ($(TEST),irq_test)
+    TESTCASE := test_irq
+  else ifeq ($(TEST),error_test)
+    TESTCASE := test_error
+  else
+    $(error unknown sw test '$(TEST)')
+  endif
+else
+  $(error unknown TESTSUITE '$(TESTSUITE)')
+endif
+
+BIN := $(OUT_DIR)/$(TESTSUITE)_$(TEST).bin
+
+# Agent randomisation knobs (consumed as plusargs by py/tb_env.py). The M2
+# acceptance runs the compliance suites with random memory delays and the
+# IRQ agent on; the dedicated tests override them. Spurious responses are
+# supported by the agent but stay off on this tb: its SecureIbex=0 core
+# does not gate stray bus responses, so tb_env forces them off (the same
+# rule as the UVM base test).
+#   +ibex_cocotb_zero_delays=1    force all memory delays to zero
+#   +ibex_cocotb_zero_delays=0    force the random delay distribution
+#   +ibex_cocotb_spurious_resp=1  request spurious dside responses
+#   +ibex_cocotb_irq=0            disable the IRQ agent
+#   +ibex_cocotb_irq_nmi=1        include the NMI line in the IRQ agent
+ifeq ($(TESTSUITE),sw)
+  ifeq ($(TEST),irq_test)
+    # The NMI line is off by default: on this tb (WritebackStage=0) the DUT
+    # retires the in-flight instruction after the irq-only RVFI event, which
+    # the co-simulator's NMI model (trap at the very next step) cannot
+    # match. The UVM's NMI tests run on WritebackStage=1 configurations.
+    # The NMI handler in irq_test.S stays for a WB=1 variant.
+    IBEX_COCOTB_OPTS := +ibex_cocotb_irq=1 +ibex_cocotb_irq_nmi=0
+  else ifeq ($(TEST),error_test)
+    IBEX_COCOTB_OPTS := +ibex_cocotb_irq=0 +ibex_cocotb_irq_nmi=0
+  endif
+else
+  IBEX_COCOTB_OPTS := +ibex_cocotb_irq=1 +ibex_cocotb_irq_nmi=0
+endif
 
 # Image load base address: the Python memory model loads the binary here and
 # the tb (CMD_INIT) uses the same plusarg for the co-simulator backdoor
@@ -73,9 +140,9 @@ COMPILE_ARGS = \
   -LDFLAGS "$(COSIM_LDFLAGS)"
 
 # Runtime plusargs consumed by tb/ibex_cocotb_tb.sv (CMD_INIT) to load the
-# binary into the co-simulator, and by the Python test for its own copy of
-# the image base address.
-COCOTB_PLUSARGS = +ibex_cocotb_bin=$(BIN) +ibex_cocotb_load_addr=$(IBEX_LOAD_ADDR)
+# binary into the co-simulator, by the Python test for its own copy of the
+# image base address, and by py/tb_env.py for the agent knobs.
+COCOTB_PLUSARGS = +ibex_cocotb_bin=$(BIN) +ibex_cocotb_load_addr=$(IBEX_LOAD_ADDR) $(IBEX_COCOTB_OPTS)
 
 # Environment for the Python testbench.
 export IBEX_COCOTB_BIN = $(BIN)
@@ -88,20 +155,15 @@ export CPPFLAGS = -I$(IBEX_ROOT)/dv/cosim -I$(IBEX_ROOT)/dv/uvm/core_ibex/common
 # Rebuild/rerun the simulation when the test binary changes.
 CUSTOM_SIM_DEPS = $(BIN)
 
-# --- Test binary build (rv32ui from vendored riscv-tests) ---
+# --- Test binary build ---
 # GCC options mirror dv/uvm/core_ibex/directed_tests/directed_testlist.yaml
 # (riscv-tests config); the linker script is the directed-test link.ld.
-TEST_INC_DIRS = -I$(IBEX_ROOT)/vendor/riscv-test-env/ \
-                -I$(IBEX_ROOT)/vendor/riscv-test-env/p/ \
-                -I$(IBEX_ROOT)/vendor/riscv-tests/isa/macros/scalar/ \
-                -I$(IBEX_ROOT)/dv/uvm/core_ibex/directed_tests
-
-$(BIN): $(IBEX_ROOT)/vendor/riscv-tests/isa/rv32ui/$(TEST).S | $(OUT_DIR)
+$(BIN): $(SW_TEST_SRC) | $(OUT_DIR)
 	$(RISCV_GCC) -march=rv32imc_zicsr -mabi=ilp32 -static -mcmodel=medany \
-	  -fvisibility=hidden -nostdlib -nostartfiles $(TEST_INC_DIRS) \
+	  -fvisibility=hidden -nostdlib -nostartfiles $(SW_TEST_INC) \
 	  -T $(IBEX_ROOT)/dv/uvm/core_ibex/directed_tests/link.ld \
-	  -o $(OUT_DIR)/rv32ui_$(TEST).elf $<
-	$(RISCV_OBJCOPY) -O binary $(OUT_DIR)/rv32ui_$(TEST).elf $@
+	  -o $(OUT_DIR)/$(TESTSUITE)_$(TEST).elf $<
+	$(RISCV_OBJCOPY) -O binary $(OUT_DIR)/$(TESTSUITE)_$(TEST).elf $@
 
 $(OUT_DIR):
 	mkdir -p $@

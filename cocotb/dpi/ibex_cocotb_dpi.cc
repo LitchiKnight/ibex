@@ -78,7 +78,8 @@ void *ibex_cocotb_cosim_init(const char *isa_string, unsigned int start_pc,
   svBitVecVal dm_end_addr_val[1] = {{dm_end_addr}};
 
   Cosim *cosim = static_cast<Cosim *>(spike_cosim_init(
-      isa_string, start_pc_val, start_mtvec_val, nullptr, pmp_num_regions_val,
+      isa_string, start_pc_val, start_mtvec_val, "spike_cosim.log",
+      pmp_num_regions_val,
       pmp_granularity_val, mhpm_counter_num_val, secure_ibex, icache,
       dm_start_addr_val, dm_end_addr_val));
   if (!cosim) {
